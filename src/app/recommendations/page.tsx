@@ -3,6 +3,8 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Lightbulb, Target, TrendingDown, FileText, Search, Filter, Eye, Zap, ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { useDateRange } from '@/lib/DateRangeContext'
+import { fetchAllRows, aggregateRows } from '@/lib/dataHelpers'
 import RecTinder, { TinderRec } from '@/components/RecTinder'
 
 type Severity = 'critical' | 'opportunity' | 'info'
@@ -40,6 +42,8 @@ function fmt(n: number) { return n.toLocaleString() }
 function shortUrl(url: string) { return url.replace('https://www.pointhacks.com.au', '') || '/' }
 
 export default function RecommendationsPage() {
+  const { dateRange } = useDateRange()
+  const { startDate, endDate } = dateRange
   const [recs, setRecs] = useState<Rec[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<Category | 'all'>('all')
@@ -53,15 +57,19 @@ export default function RecommendationsPage() {
       try {
       const results: Rec[] = []
 
-      // Use RPC for aggregated data — no duplicates
-      const [queryRes, pageRes, kwRes] = await Promise.all([
-        supabase.rpc('gsc_query_summary'),
-        supabase.rpc('gsc_page_summary'),
+      // Fetch all rows with pagination + date filtering, then aggregate
+      const [rawQueries, rawPages, kwRes] = await Promise.all([
+        fetchAllRows('gsc_queries', startDate, endDate),
+        fetchAllRows('gsc_pages', startDate, endDate),
         supabase.from('seo_keywords').select('*').order('search_volume', { ascending: false }),
       ])
 
-      const queries: { query: string; clicks: number; impressions: number; avg_ctr: number; avg_position: number }[] = queryRes.data || []
-      const pages: { page: string; clicks: number; impressions: number; avg_ctr: number; avg_position: number }[] = pageRes.data || []
+      const aggQ = aggregateRows<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>(rawQueries, 'query')
+      const aggP = aggregateRows<{ page: string; clicks: number; impressions: number; ctr: number; position: number }>(rawPages, 'page')
+
+      // Map to the field names used by the recommendation logic below
+      const queries = aggQ.map(q => ({ query: q.query, clicks: q.clicks, impressions: q.impressions, avg_ctr: q.ctr / 100, avg_position: q.position }))
+      const pages = aggP.map(p => ({ page: p.page, clicks: p.clicks, impressions: p.impressions, avg_ctr: p.ctr / 100, avg_position: p.position }))
       const keywords: { keyword: string; position: number; search_volume: number }[] = kwRes.data || []
 
       let id = 0
@@ -187,7 +195,7 @@ export default function RecommendationsPage() {
       }
     }
     generate()
-  }, [])
+  }, [startDate, endDate])
 
   const filtered = useMemo(() => filter === 'all' ? recs : recs.filter(r => r.category === filter), [recs, filter])
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))

@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
+import { useDateRange } from '@/lib/DateRangeContext'
+import { fetchAllRows, aggregateRows } from '@/lib/dataHelpers'
 import {
   MousePointerClick, Eye, Target, Search, TrendingUp, TrendingDown,
   Globe, FileText, BarChart3, PieChart as PieIcon, Lightbulb, Layers,
@@ -46,6 +48,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 }
 
 export default function OverviewPage() {
+  const { dateRange } = useDateRange()
+  const { startDate, endDate } = dateRange
   const [kpis, setKpis] = useState<KPIs | null>(null)
   const [daily, setDaily] = useState<DailyRow[]>([])
   const [traffic, setTraffic] = useState<TrafficRow[]>([])
@@ -57,21 +61,71 @@ export default function OverviewPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [kRes, dailyRes, tRes, pagesRes, ctrRes, pkRes] = await Promise.all([
-          supabase.rpc('gsc_kpis'),
-          supabase.from('ga4_daily').select('*').order('date', { ascending: true }).limit(28),
-          supabase.from('ga4_traffic_sources').select('source,medium,sessions'),
+        // Fetch all GSC data with pagination + date filtering
+        const [gscQueriesRaw, gscPagesRaw, dailyRes, tRes, pagesRes] = await Promise.all([
+          fetchAllRows('gsc_queries', startDate, endDate),
+          fetchAllRows('gsc_pages', startDate, endDate),
+          supabase.from('ga4_daily').select('*').gte('date', startDate).lte('date', endDate).order('date', { ascending: true }),
+          supabase.from('ga4_traffic_sources').select('source,medium,sessions,date').gte('date', startDate).lte('date', endDate),
           supabase.from('ga4_pages').select('*').order('screen_page_views', { ascending: false }).limit(20),
-          supabase.rpc('gsc_ctr_by_position'),
-          supabase.rpc('gsc_page_kpis'),
         ])
-        if (kRes.data?.[0]) setKpis(kRes.data[0])
+
+        // Aggregate queries and pages
+        const aggQueries = aggregateRows<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>(gscQueriesRaw, 'query')
+        const aggPages = aggregateRows<PageKPI & { page: string; clicks: number; impressions: number; ctr: number; position: number }>(gscPagesRaw, 'page')
+
+        // Compute query-level KPIs
+        const totalQClicks = aggQueries.reduce((s, q) => s + q.clicks, 0)
+        const totalQImpressions = aggQueries.reduce((s, q) => s + q.impressions, 0)
+        const weightedAvgCTR = totalQImpressions > 0 ? totalQClicks / totalQImpressions : 0
+        const weightedAvgPos = totalQImpressions > 0
+          ? aggQueries.reduce((s, q) => s + q.position * q.impressions, 0) / totalQImpressions
+          : 0
+        const top3Count = aggQueries.filter(q => q.position <= 3).length
+        const top10Count = aggQueries.filter(q => q.position <= 10).length
+
+        setKpis({
+          total_clicks: totalQClicks,
+          total_impressions: totalQImpressions,
+          avg_ctr: weightedAvgCTR,
+          avg_position: weightedAvgPos,
+          unique_queries: aggQueries.length,
+          top3_count: top3Count,
+          top10_count: top10Count,
+        })
+
+        // Set page KPIs (with avg_ctr and avg_position fields for compatibility)
+        setPageKpis(aggPages.map(p => ({
+          page: p.page,
+          clicks: p.clicks,
+          impressions: p.impressions,
+          avg_ctr: p.ctr / 100, // convert back to decimal for existing code
+          avg_position: p.position,
+        })))
+
+        // Compute CTR by position buckets from raw query data
+        const bucketDefs = [
+          { position_bucket: '1', min: 0, max: 1.5 },
+          { position_bucket: '2-3', min: 1.5, max: 3.5 },
+          { position_bucket: '4-10', min: 3.5, max: 10.5 },
+          { position_bucket: '11-20', min: 10.5, max: 20.5 },
+          { position_bucket: '21+', min: 20.5, max: 9999 },
+        ]
+        const ctrBuckets: CTRByPos[] = bucketDefs.map(b => {
+          const inBucket = aggQueries.filter(q => q.position >= b.min && q.position < b.max)
+          const totalImp = inBucket.reduce((s, q) => s + q.impressions, 0)
+          const totalClk = inBucket.reduce((s, q) => s + q.clicks, 0)
+          return {
+            position_bucket: b.position_bucket,
+            avg_ctr: totalImp > 0 ? totalClk / totalImp : 0,
+            query_count: inBucket.length,
+          }
+        })
+        setCtrByPos(ctrBuckets)
+
         setDaily((dailyRes.data as DailyRow[]) || [])
         setTraffic((tRes.data as TrafficRow[]) || [])
         setGa4Pages((pagesRes.data as GA4Page[]) || [])
-        setCtrByPos((ctrRes.data as CTRByPos[]) || [])
-        // gsc_page_kpis may return array of pages or single summary
-        if (Array.isArray(pkRes.data)) setPageKpis(pkRes.data)
       } catch (e) {
         // silently handle
       } finally {
@@ -79,7 +133,7 @@ export default function OverviewPage() {
       }
     }
     load()
-  }, [])
+  }, [startDate, endDate])
 
   // Derived data
   const k = kpis || { total_clicks: 0, total_impressions: 0, avg_ctr: 0, avg_position: 0, unique_queries: 0, top3_count: 0, top10_count: 0 }

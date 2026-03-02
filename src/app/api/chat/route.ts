@@ -394,11 +394,57 @@ const tools: any[] = [
   },
 ]
 
+// ─── Paginated server-side data fetching ────────────────────────
+async function fetchAllServerRows(table: string): Promise<any[]> {
+  const PAGE_SIZE = 1000
+  let allData: any[] = []
+  let offset = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .range(offset, offset + PAGE_SIZE - 1)
+    if (error || !data || data.length === 0) break
+    allData = allData.concat(data)
+    if (data.length < PAGE_SIZE) break
+    offset += PAGE_SIZE
+  }
+  return allData
+}
+
+function aggregateServerRows(raw: any[], groupKey: string) {
+  const deduped = new Map<string, any>()
+  for (const r of raw) {
+    const key = `${r[groupKey]}|${r.date}`
+    if (!deduped.has(key)) deduped.set(key, r)
+  }
+  const map = new Map<string, { clicks: number; impressions: number; ctr_sum: number; pos_sum: number; count: number }>()
+  for (const r of deduped.values()) {
+    const key = r[groupKey]
+    const ex = map.get(key)
+    if (ex) {
+      ex.clicks += r.clicks || 0; ex.impressions += r.impressions || 0
+      ex.ctr_sum += r.ctr || 0; ex.pos_sum += r.position || 0; ex.count++
+    } else {
+      map.set(key, { clicks: r.clicks || 0, impressions: r.impressions || 0, ctr_sum: r.ctr || 0, pos_sum: r.position || 0, count: 1 })
+    }
+  }
+  return Array.from(map.entries()).map(([k, v]) => ({
+    [groupKey]: k,
+    query: groupKey === 'query' ? k : undefined,
+    page: groupKey === 'page' ? k : undefined,
+    clicks: v.clicks,
+    impressions: v.impressions,
+    avg_ctr: v.count > 0 ? v.ctr_sum / v.count : 0,
+    avg_position: v.count > 0 ? v.pos_sum / v.count : 0,
+  })).sort((a, b) => b.clicks - a.clicks)
+}
+
 // ─── Tool execution ─────────────────────────────────────────────
 async function executeTool(name: string, input: any): Promise<string> {
   try {
-    const fetchQueries = async () => (await supabase.rpc('gsc_query_summary')).data || []
-    const fetchPages = async () => (await supabase.rpc('gsc_page_summary')).data || []
+    const fetchQueries = async () => aggregateServerRows(await fetchAllServerRows('gsc_queries'), 'query')
+    const fetchPages = async () => aggregateServerRows(await fetchAllServerRows('gsc_pages'), 'page')
 
     switch (name) {
 
@@ -427,13 +473,43 @@ async function executeTool(name: string, input: any): Promise<string> {
       }
 
       case 'get_gsc_kpis': {
-        const [qK, pK] = await Promise.all([supabase.rpc('gsc_kpis'), supabase.rpc('gsc_page_kpis')])
-        return JSON.stringify({ query_level: qK.data?.[0], page_level: pK.data?.[0] })
+        const queries = await fetchQueries()
+        const pages = await fetchPages()
+        const qKpis = {
+          total_clicks: queries.reduce((s: number, q: any) => s + q.clicks, 0),
+          total_impressions: queries.reduce((s: number, q: any) => s + q.impressions, 0),
+          unique_queries: queries.length,
+          avg_ctr: queries.length > 0 ? queries.reduce((s: number, q: any) => s + q.avg_ctr, 0) / queries.length : 0,
+          avg_position: queries.length > 0 ? queries.reduce((s: number, q: any) => s + q.avg_position, 0) / queries.length : 0,
+          top3_count: queries.filter((q: any) => q.avg_position <= 3).length,
+          top10_count: queries.filter((q: any) => q.avg_position <= 10).length,
+        }
+        const pKpis = {
+          total_clicks: pages.reduce((s: number, p: any) => s + p.clicks, 0),
+          total_impressions: pages.reduce((s: number, p: any) => s + p.impressions, 0),
+          unique_pages: pages.length,
+          avg_ctr: pages.length > 0 ? pages.reduce((s: number, p: any) => s + p.avg_ctr, 0) / pages.length : 0,
+          avg_position: pages.length > 0 ? pages.reduce((s: number, p: any) => s + p.avg_position, 0) / pages.length : 0,
+        }
+        return JSON.stringify({ query_level: qKpis, page_level: pKpis })
       }
 
       case 'get_ctr_by_position': {
-        const { data } = await supabase.rpc('gsc_ctr_by_position')
-        return JSON.stringify(data)
+        const allQ = await fetchQueries()
+        const bucketDefs = [
+          { position_bucket: '1', min: 0, max: 1.5 },
+          { position_bucket: '2-3', min: 1.5, max: 3.5 },
+          { position_bucket: '4-10', min: 3.5, max: 10.5 },
+          { position_bucket: '11-20', min: 10.5, max: 20.5 },
+          { position_bucket: '21+', min: 20.5, max: 9999 },
+        ]
+        const buckets = bucketDefs.map(b => {
+          const inBucket = allQ.filter((q: any) => q.avg_position >= b.min && q.avg_position < b.max)
+          const totalImp = inBucket.reduce((s: number, q: any) => s + q.impressions, 0)
+          const totalClk = inBucket.reduce((s: number, q: any) => s + q.clicks, 0)
+          return { position_bucket: b.position_bucket, avg_ctr: totalImp > 0 ? totalClk / totalImp : 0, query_count: inBucket.length }
+        })
+        return JSON.stringify(buckets)
       }
 
       case 'get_ga4_daily': {
@@ -772,12 +848,14 @@ async function executeTool(name: string, input: any): Promise<string> {
       }
 
       case 'get_executive_summary': {
-        const [kpiQ, kpiP, daily, queries, pages] = await Promise.all([
-          supabase.rpc('gsc_kpis'), supabase.rpc('gsc_page_kpis'),
+        const [daily, queries, pages] = await Promise.all([
           supabase.from('ga4_daily').select('*').order('date',{ascending:false}).limit(14),
           fetchQueries(), fetchPages(),
         ])
-        const d = daily.data||[], k = kpiQ.data?.[0], pk = kpiP.data?.[0]
+        const d = daily.data||[]
+        const totalQClicks = queries.reduce((s: number, q: any) => s + q.clicks, 0)
+        const totalQImpressions = queries.reduce((s: number, q: any) => s + q.impressions, 0)
+        const totalPClicks = pages.reduce((s: number, p: any) => s + p.clicks, 0)
         const tw = d.slice(0,7), lw = d.slice(7,14)
         const twS = tw.reduce((s: number,d: any) => s+(d.sessions||0),0), lwS = lw.reduce((s: number,d: any) => s+(d.sessions||0),0)
         const wowPct = lwS > 0 ? +((twS-lwS)/lwS*100).toFixed(1) : 0
@@ -786,7 +864,7 @@ async function executeTool(name: string, input: any): Promise<string> {
         const ctrIssues = queries.filter((q: any) => { if (q.avg_position > 5 || q.impressions < 200) return false; const exp = q.avg_position <= 1.5 ? 0.28 : q.avg_position <= 3.5 ? 0.12 : 0.06; return q.avg_ctr < exp }).length
         const quickWins = queries.filter((q: any) => q.avg_position >= 4 && q.avg_position <= 15 && q.impressions >= 500).length
         return JSON.stringify({
-          kpis: { query_clicks: k?.total_clicks, page_clicks: pk?.total_clicks, impressions: k?.total_impressions, unique_queries: k?.unique_queries, unique_pages: pk?.unique_pages },
+          kpis: { query_clicks: totalQClicks, page_clicks: totalPClicks, impressions: totalQImpressions, unique_queries: queries.length, unique_pages: pages.length },
           traffic: { sessions_7d: twS, wow_change_pct: wowPct, daily: tw.map((d: any) => ({ date: d.date, sessions: d.sessions })) },
           seo: { top_3_keywords: top3, top_10_keywords: top10, total_keywords: queries.length, ctr_issues: ctrIssues, quick_wins: quickWins },
           top_keywords: queries.slice(0,5).map((q: any) => ({ query: q.query, clicks: q.clicks, position: +q.avg_position.toFixed(1) })),
@@ -1141,16 +1219,18 @@ async function executeTool(name: string, input: any): Promise<string> {
       }
 
       case 'click_through_funnel': {
-        const [kpiQ, kpiP, daily, ga4Pages] = await Promise.all([
-          supabase.rpc('gsc_kpis'), supabase.rpc('gsc_page_kpis'),
+        const [queries, pages, daily, ga4Pages] = await Promise.all([
+          fetchQueries(), fetchPages(),
           supabase.from('ga4_daily').select('*').order('date',{ascending:false}).limit(7),
           supabase.from('ga4_pages').select('*').order('sessions',{ascending:false}).limit(50)
         ])
-        const k = kpiQ.data?.[0], pk = kpiP.data?.[0], d = daily.data||[], ga = ga4Pages.data||[]
-        const sessions = d.reduce((s,r) => s+(r.sessions||0),0)
-        const avgBounce = ga.length ? ga.reduce((s,p) => s+(p.bounce_rate||0),0)/ga.length : 0
+        const totalImpressions = queries.reduce((s: number, q: any) => s + q.impressions, 0)
+        const totalClicks = pages.reduce((s: number, p: any) => s + p.clicks, 0)
+        const d = daily.data||[], ga = ga4Pages.data||[]
+        const sessions = d.reduce((s: number,r: any) => s+(r.sessions||0),0)
+        const avgBounce = ga.length ? ga.reduce((s: number,p: any) => s+(p.bounce_rate||0),0)/ga.length : 0
         const engaged = Math.round(sessions * (1 - avgBounce/100))
-        return JSON.stringify({ funnel: [ { stage: 'Impressions', value: k?.total_impressions || 0 }, { stage: 'Clicks (GSC)', value: pk?.total_clicks || 0 }, { stage: 'Sessions (GA4 7d)', value: sessions }, { stage: 'Engaged sessions', value: engaged } ], drop_offs: { impressions_to_clicks_pct: pk ? +((pk.total_clicks/k.total_impressions)*100).toFixed(2) : 0, clicks_to_sessions_pct: sessions > 0 ? +((sessions/(pk?.total_clicks||1))*100).toFixed(1) : 0, session_to_engaged_pct: sessions > 0 ? +((engaged/sessions)*100).toFixed(1) : 0 } })
+        return JSON.stringify({ funnel: [ { stage: 'Impressions', value: totalImpressions }, { stage: 'Clicks (GSC)', value: totalClicks }, { stage: 'Sessions (GA4 7d)', value: sessions }, { stage: 'Engaged sessions', value: engaged } ], drop_offs: { impressions_to_clicks_pct: totalImpressions > 0 ? +((totalClicks/totalImpressions)*100).toFixed(2) : 0, clicks_to_sessions_pct: sessions > 0 ? +((sessions/(totalClicks||1))*100).toFixed(1) : 0, session_to_engaged_pct: sessions > 0 ? +((engaged/sessions)*100).toFixed(1) : 0 } })
       }
 
       case 'top_queries_per_page': {

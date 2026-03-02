@@ -8,6 +8,7 @@ import {
   AlertCircle, Info, ExternalLink, CheckCircle2, Clock, Archive
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { fetchAllRows } from '@/lib/dataHelpers'
 
 /* ─── Types ─── */
 interface GscQuery { query: string; clicks: number; impressions: number; ctr: number; position: number; date: string }
@@ -264,13 +265,14 @@ export default function MonitorPage() {
     setLoading(true)
     try {
       const since = daysAgo(21)
-      const [qRes, pRes, kRes] = await Promise.all([
-        supabase.from('gsc_queries').select('*').gte('date', since).order('date', { ascending: false }),
-        supabase.from('gsc_pages').select('*').gte('date', since).order('date', { ascending: false }),
+      const today = daysAgo(0)
+      const [qAll, pAll, kRes] = await Promise.all([
+        fetchAllRows('gsc_queries', since, today),
+        fetchAllRows('gsc_pages', since, today),
         supabase.from('seo_keywords').select('*').gte('date', since).order('date', { ascending: false }),
       ])
-      setQueries(qRes.data ?? [])
-      setPages(pRes.data ?? [])
+      setQueries(qAll as GscQuery[])
+      setPages(pAll as GscPage[])
       setKeywords(kRes.data ?? [])
 
       const { data: syncData } = await supabase
