@@ -37,69 +37,21 @@ function LoadingScreen() {
   )
 }
 
-const ACCESS_CODE = '20262026'
+const ACCESS_CODE = 'Pointhacks2026!'
 
 function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
-  const [digits, setDigits] = useState<string[]>(Array(8).fill(''))
+  const [password, setPassword] = useState('')
   const [error, setError] = useState(false)
   const [success, setSuccess] = useState(false)
 
-  function handleChange(index: number, value: string) {
-    if (!/^\d*$/.test(value)) return
-    const newDigits = [...digits]
-    
-    // Handle paste of full code
-    if (value.length > 1) {
-      const pasted = value.slice(0, 8).split('')
-      for (let i = 0; i < 8; i++) newDigits[i] = pasted[i] || ''
-      setDigits(newDigits)
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (password === ACCESS_CODE) {
+      setSuccess(true)
       setError(false)
-      const code = newDigits.join('')
-      if (code.length === 8) {
-        if (code === ACCESS_CODE) {
-          setSuccess(true)
-          setTimeout(() => { localStorage.setItem('ph-auth', code); onSuccess() }, 600)
-        } else {
-          setError(true)
-        }
-      }
-      // Focus last filled or next empty
-      const nextIdx = Math.min(pasted.length, 7)
-      const el = document.getElementById(`code-${nextIdx}`)
-      el?.focus()
-      return
-    }
-
-    newDigits[index] = value
-    setDigits(newDigits)
-    setError(false)
-
-    // Auto-advance
-    if (value && index < 7) {
-      const next = document.getElementById(`code-${index + 1}`)
-      next?.focus()
-    }
-
-    // Check code when complete
-    const code = newDigits.join('')
-    if (code.length === 8) {
-      if (code === ACCESS_CODE) {
-        setSuccess(true)
-        setTimeout(() => { localStorage.setItem('ph-auth', code); onSuccess() }, 600)
-      } else {
-        setError(true)
-      }
-    }
-  }
-
-  function handleKeyDown(index: number, e: React.KeyboardEvent) {
-    if (e.key === 'Backspace' && !digits[index] && index > 0) {
-      const prev = document.getElementById(`code-${index - 1}`)
-      prev?.focus()
-      const newDigits = [...digits]
-      newDigits[index - 1] = ''
-      setDigits(newDigits)
-      setError(false)
+      setTimeout(() => { localStorage.setItem('ph-auth', password); onSuccess() }, 600)
+    } else {
+      setError(true)
     }
   }
 
@@ -110,61 +62,67 @@ function AuthScreen({ onSuccess }: { onSuccess: () => void }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: 20,
     }}>
-      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-        <div style={{ position: 'absolute', top: '-20%', right: '-10%', width: 600, height: 600, borderRadius: '50%', background: 'transparent' }} />
-        <div style={{ position: 'absolute', bottom: '-20%', left: '-10%', width: 500, height: 500, borderRadius: '50%', background: 'transparent' }} />
-      </div>
-
-      <div style={{ position: 'relative', width: '100%', maxWidth: 420, animation: 'fadeUp 0.6s ease-out', textAlign: 'center' }}>
+      <div style={{ position: 'relative', width: '100%', maxWidth: 380, animation: 'fadeUp 0.6s ease-out', textAlign: 'center' }}>
         <img src="/logo-inverse.svg" alt="Point Hacks" style={{ width: 160, margin: '0 auto 16px' }} />
         <p style={{ fontSize: '0.85rem', color: '#707070', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 48 }}>
           Analytics Dashboard
         </p>
 
         <p style={{ fontSize: '0.8rem', color: '#8C8C8C', marginBottom: 20, fontWeight: 500, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-          Enter access code
+          Enter password
         </p>
 
-        {/* Code inputs */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 32 }}>
-          {digits.map((d, i) => (
-            <div key={i} style={{ position: 'relative' }}>
-              {i === 4 && <div style={{ position: 'absolute', left: -7, top: '50%', transform: 'translateY(-50%)', width: 4, height: 4, borderRadius: '50%', background: '#383838' }} />}
-              <input
-                id={`code-${i}`}
-                type="text"
-                inputMode="numeric"
-                maxLength={i === 0 ? 8 : 1}
-                value={d}
-                onChange={e => handleChange(i, e.target.value)}
-                onKeyDown={e => handleKeyDown(i, e)}
-                onFocus={e => e.target.select()}
-                autoFocus={i === 0}
-                style={{
-                  width: 44, height: 56,
-                  textAlign: 'center',
-                  fontSize: '1.4rem', fontWeight: 700,
-                  borderRadius: 12,
-                  border: `2px solid ${success ? '#34D39999' : error ? '#EF444480' : d ? '#34D3994d' : '#333333'}`,
-                  background: success ? '#34D39915' : error ? '#EF44440d' : '#2A2A2A',
-                  color: success ? '#34D399' : 'white',
-                  outline: 'none',
-                  transition: 'all 0.2s ease',
-                  caretColor: '#34D399',
-                }}
-              />
-            </div>
-          ))}
-        </div>
+        <form onSubmit={handleSubmit}>
+          <input
+            type="password"
+            value={password}
+            onChange={e => { setPassword(e.target.value); setError(false) }}
+            autoFocus
+            placeholder="Password"
+            style={{
+              width: '100%',
+              height: 52,
+              padding: '0 20px',
+              fontSize: '1rem', fontWeight: 500,
+              borderRadius: 12,
+              border: `2px solid ${success ? '#34D39999' : error ? '#EF444480' : password ? '#34D3994d' : '#333333'}`,
+              background: success ? '#34D39915' : error ? '#EF44440d' : '#2A2A2A',
+              color: success ? '#34D399' : 'white',
+              outline: 'none',
+              transition: 'all 0.2s ease',
+              caretColor: '#34D399',
+              marginBottom: 16,
+            }}
+          />
+          <button
+            type="submit"
+            style={{
+              width: '100%',
+              height: 48,
+              borderRadius: 12,
+              border: '1px solid #383838',
+              background: '#2A2A2A',
+              color: '#F5F5F5',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#363636' }}
+            onMouseLeave={e => { e.currentTarget.style.background = '#2A2A2A' }}
+          >
+            Sign In
+          </button>
+        </form>
 
         {error && (
-          <div style={{ fontSize: '0.8rem', color: '#f87171', marginBottom: 16, animation: 'shake 0.4s ease-in-out' }}>
-            Invalid access code
+          <div style={{ fontSize: '0.8rem', color: '#f87171', marginTop: 16, animation: 'shake 0.4s ease-in-out' }}>
+            Invalid password
           </div>
         )}
 
         {success && (
-          <div style={{ fontSize: '0.8rem', color: '#34D399', marginBottom: 16 }}>
+          <div style={{ fontSize: '0.8rem', color: '#34D399', marginTop: 16 }}>
             Access granted
           </div>
         )}
