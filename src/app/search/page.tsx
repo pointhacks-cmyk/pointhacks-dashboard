@@ -334,6 +334,26 @@ function KPICard({ icon, label, value, delta, delay = '0s' }: { icon: React.Reac
   )
 }
 
+// Supabase returns max 1000 rows per query. Paginate to fetch all.
+async function fetchAllRows(table: string, startDate: string, endDate: string): Promise<any[]> {
+  const PAGE_SIZE = 1000
+  let allData: any[] = []
+  let offset = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .range(offset, offset + PAGE_SIZE - 1)
+    if (error || !data || data.length === 0) break
+    allData = allData.concat(data)
+    if (data.length < PAGE_SIZE) break
+    offset += PAGE_SIZE
+  }
+  return allData
+}
+
 function aggregateRows<T extends Record<string, any>>(raw: any[], groupKey: string): T[] {
   const map = new Map<string, { clicks: number; impressions: number; ctr_sum: number; pos_sum: number; count: number }>()
   for (const r of raw) {
@@ -571,20 +591,20 @@ export default function SearchPage() {
     async function load() {
       setLoading(true)
       try {
-        const [qRes, pRes] = await Promise.all([
-          supabase.from('gsc_queries').select('*').gte('date', startDate).lte('date', endDate),
-          supabase.from('gsc_pages').select('*').gte('date', startDate).lte('date', endDate),
+        const [qRaw, pRaw] = await Promise.all([
+          fetchAllRows('gsc_queries', startDate, endDate),
+          fetchAllRows('gsc_pages', startDate, endDate),
         ])
-        setQueries(aggregateRows<QueryRow>(qRes.data || [], 'query'))
-        setPages(aggregateRows<PageRow>(pRes.data || [], 'page'))
+        setQueries(aggregateRows<QueryRow>(qRaw, 'query'))
+        setPages(aggregateRows<PageRow>(pRaw, 'page'))
 
         if (compareEnabled) {
-          const [cqRes, cpRes] = await Promise.all([
-            supabase.from('gsc_queries').select('*').gte('date', compareStartDate).lte('date', compareEndDate),
-            supabase.from('gsc_pages').select('*').gte('date', compareStartDate).lte('date', compareEndDate),
+          const [cqRaw, cpRaw] = await Promise.all([
+            fetchAllRows('gsc_queries', compareStartDate, compareEndDate),
+            fetchAllRows('gsc_pages', compareStartDate, compareEndDate),
           ])
-          setCompareQueries(aggregateRows<QueryRow>(cqRes.data || [], 'query'))
-          setComparePages(aggregateRows<PageRow>(cpRes.data || [], 'page'))
+          setCompareQueries(aggregateRows<QueryRow>(cqRaw, 'query'))
+          setComparePages(aggregateRows<PageRow>(cpRaw, 'page'))
         } else {
           setCompareQueries([])
           setComparePages([])
