@@ -355,8 +355,18 @@ async function fetchAllRows(table: string, startDate: string, endDate: string): 
 }
 
 function aggregateRows<T extends Record<string, any>>(raw: any[], groupKey: string): T[] {
-  const map = new Map<string, { clicks: number; impressions: number; ctr_sum: number; pos_sum: number; count: number }>()
+  // Step 1: Deduplicate — keep one row per (groupKey + date), taking the first occurrence
+  const deduped = new Map<string, any>()
   for (const r of raw) {
+    const dedupeKey = `${r[groupKey]}|${r.date}`
+    if (!deduped.has(dedupeKey)) {
+      deduped.set(dedupeKey, r)
+    }
+  }
+
+  // Step 2: Aggregate deduplicated rows by groupKey (sum across dates)
+  const map = new Map<string, { clicks: number; impressions: number; ctr_sum: number; pos_sum: number; count: number }>()
+  for (const r of deduped.values()) {
     const key = r[groupKey]
     const existing = map.get(key)
     if (existing) {
@@ -720,23 +730,31 @@ export default function SearchPage() {
   }, [filteredPages, compareEnabled, compareMap])
 
   const kpis = useMemo(() => {
-    const d = tab === 'queries' ? queries : filteredPages
+    // Always use page-level data for KPIs (represents true GSC totals)
+    // When folder filter active, use filtered pages; otherwise all pages
+    const d = filteredPages
     const totalClicks = d.reduce((s, r) => s + r.clicks, 0)
     const totalImpressions = d.reduce((s, r) => s + r.impressions, 0)
-    const avgCTR = d.length > 0 ? d.reduce((s, r) => s + r.ctr, 0) / d.length : 0
-    const avgPos = d.length > 0 ? d.reduce((s, r) => s + r.position, 0) / d.length : 0
+    // Weighted average CTR = total clicks / total impressions
+    const avgCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0
+    // Weighted average position by impressions
+    const totalImprForPos = d.reduce((s, r) => s + r.impressions, 0)
+    const avgPos = totalImprForPos > 0 ? d.reduce((s, r) => s + r.position * r.impressions, 0) / totalImprForPos : 0
 
     let clicksDelta: number | undefined
     let impressionsDelta: number | undefined
     let ctrDelta: number | undefined
     let posDelta: number | undefined
 
-    if (compareEnabled) {
-      const cd = tab === 'queries' ? compareQueries : comparePages
-      const prevClicks = cd.reduce((s, r) => s + r.clicks, 0)
-      const prevImpressions = cd.reduce((s, r) => s + r.impressions, 0)
-      const prevAvgCTR = cd.length > 0 ? cd.reduce((s, r) => s + r.ctr, 0) / cd.length : 0
-      const prevAvgPos = cd.length > 0 ? cd.reduce((s, r) => s + r.position, 0) / cd.length : 0
+    if (compareEnabled && comparePages.length > 0) {
+      const cp = selectedFolders.length > 0
+        ? comparePages.filter(p => selectedFolders.some(f => p.page.replace(/^https?:\/\/[^/]+/, '').startsWith(f)))
+        : comparePages
+      const prevClicks = cp.reduce((s, r) => s + r.clicks, 0)
+      const prevImpressions = cp.reduce((s, r) => s + r.impressions, 0)
+      const prevAvgCTR = prevImpressions > 0 ? (prevClicks / prevImpressions) * 100 : 0
+      const prevImprForPos = cp.reduce((s, r) => s + r.impressions, 0)
+      const prevAvgPos = prevImprForPos > 0 ? cp.reduce((s, r) => s + r.position * r.impressions, 0) / prevImprForPos : 0
       clicksDelta = prevClicks > 0 ? ((totalClicks - prevClicks) / prevClicks) * 100 : 0
       impressionsDelta = prevImpressions > 0 ? ((totalImpressions - prevImpressions) / prevImpressions) * 100 : 0
       ctrDelta = avgCTR - prevAvgCTR
@@ -744,7 +762,7 @@ export default function SearchPage() {
     }
 
     return { totalClicks, totalImpressions, avgCTR, avgPos, clicksDelta, impressionsDelta, ctrDelta, posDelta }
-  }, [queries, filteredPages, compareQueries, comparePages, tab, compareEnabled])
+  }, [filteredPages, comparePages, compareEnabled, selectedFolders])
 
   const toggleFolder = (folder: string) => {
     setSelectedFolders(prev => prev.includes(folder) ? prev.filter(f => f !== folder) : [...prev, folder])
