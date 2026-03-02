@@ -25,9 +25,9 @@ function getGreeting() {
 }
 
 interface KPIs { total_clicks: number; total_impressions: number; avg_ctr: number; avg_position: number; unique_queries: number; top3_count: number; top10_count: number }
-interface DailyRow { date: string; sessions?: number; active_users?: number; screenPageViews?: number; screen_page_views?: number; totalUsers?: number; total_users?: number; clicks?: number; impressions?: number }
-interface TrafficRow { source: string; medium: string; sessions: number }
-interface GA4Page { page_path?: string; page?: string; screenPageViews?: number; screen_page_views?: number; sessions?: number; clicks?: number; impressions?: number }
+interface DailyRow { date: string; sessions?: number; users?: number; new_users?: number; page_views?: number; engaged_sessions?: number; engagement_rate?: number; avg_session_duration?: number; bounce_rate?: number }
+interface TrafficRow { source: string; medium: string; sessions: number; date?: string }
+interface GA4Page { page_path?: string; page?: string; page_views?: number; sessions?: number; users?: number; bounce_rate?: number }
 interface CTRByPos { position_bucket: string; avg_ctr: number; query_count: number }
 interface PageKPI { page: string; clicks: number; impressions: number; avg_ctr: number; avg_position: number }
 
@@ -67,26 +67,27 @@ export default function OverviewPage() {
           fetchAllRows('gsc_pages', startDate, endDate),
           supabase.from('ga4_daily').select('*').gte('date', startDate).lte('date', endDate).order('date', { ascending: true }),
           supabase.from('ga4_traffic_sources').select('source,medium,sessions,date').gte('date', startDate).lte('date', endDate),
-          supabase.from('ga4_pages').select('*').order('screen_page_views', { ascending: false }).limit(20),
+          supabase.from('ga4_pages').select('*').gte('date', startDate).lte('date', endDate).order('page_views', { ascending: false }).limit(20),
         ])
 
         // Aggregate queries and pages
         const aggQueries = aggregateRows<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>(gscQueriesRaw, 'query')
         const aggPages = aggregateRows<PageKPI & { page: string; clicks: number; impressions: number; ctr: number; position: number }>(gscPagesRaw, 'page')
 
-        // Compute query-level KPIs
-        const totalQClicks = aggQueries.reduce((s, q) => s + q.clicks, 0)
-        const totalQImpressions = aggQueries.reduce((s, q) => s + q.impressions, 0)
-        const weightedAvgCTR = totalQImpressions > 0 ? totalQClicks / totalQImpressions : 0
-        const weightedAvgPos = totalQImpressions > 0
-          ? aggQueries.reduce((s, q) => s + q.position * q.impressions, 0) / totalQImpressions
+        // Use PAGE-level data for KPIs (represents true GSC totals — query data misses anonymized queries)
+        const totalPClicks = aggPages.reduce((s, p) => s + p.clicks, 0)
+        const totalPImpressions = aggPages.reduce((s, p) => s + p.impressions, 0)
+        const weightedAvgCTR = totalPImpressions > 0 ? totalPClicks / totalPImpressions : 0
+        const weightedAvgPos = totalPImpressions > 0
+          ? aggPages.reduce((s, p) => s + p.position * p.impressions, 0) / totalPImpressions
           : 0
+        // Query-level stats for insights (top 3, top 10 counts)
         const top3Count = aggQueries.filter(q => q.position <= 3).length
         const top10Count = aggQueries.filter(q => q.position <= 10).length
 
         setKpis({
-          total_clicks: totalQClicks,
-          total_impressions: totalQImpressions,
+          total_clicks: totalPClicks,
+          total_impressions: totalPImpressions,
           avg_ctr: weightedAvgCTR,
           avg_position: weightedAvgPos,
           unique_queries: aggQueries.length,
@@ -141,7 +142,7 @@ export default function OverviewPage() {
   const dailyChart = useMemo(() => daily.map(d => ({
     date: new Date(d.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }),
     sessions: d.sessions || 0,
-    pageViews: d.screenPageViews || d.screen_page_views || 0,
+    pageViews: d.page_views || 0,
   })), [daily])
 
   const channelAgg = useMemo(() => {
@@ -168,7 +169,7 @@ export default function OverviewPage() {
     return ga4Pages
       .map(p => ({
         page: p.page_path || p.page || '',
-        views: p.screenPageViews || p.screen_page_views || p.sessions || 0,
+        views: p.page_views || p.sessions || 0,
       }))
       .filter(p => p.page)
       .slice(0, 10)

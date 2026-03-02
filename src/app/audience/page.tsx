@@ -8,7 +8,7 @@ import { Users, Monitor, Globe, BarChart3, TrendingUp, Database, Activity } from
 const TEAL = '#34D399', RED = '#EF4444', NAVY = '#6366f1', GOLD = '#F59E0B', PURPLE = '#8B5CF6'
 
 interface TrafficRow { source: string; medium: string; sessions: number; date: string }
-interface DailyRow { date: string; sessions: number; pageviews: number; users: number; bounce_rate: number; avg_session_duration: number }
+interface DailyRow { date: string; sessions: number; page_views: number; users: number; bounce_rate: number; avg_session_duration: number }
 
 interface SourceSummary {
   source: string; medium: string; totalSessions: number; percentage: number; trend: number | null;
@@ -99,7 +99,7 @@ export default function AudiencePage() {
 
   const dailyKpis = useMemo(() => {
     const totalSess = dailyData.reduce((s, d) => s + (d.sessions || 0), 0);
-    const totalPV = dailyData.reduce((s, d) => s + (d.pageviews || 0), 0);
+    const totalPV = dailyData.reduce((s, d) => s + (d.page_views || 0), 0);
     const totalUsers = dailyData.reduce((s, d) => s + (d.users || 0), 0);
     const avgBounce = dailyData.length > 0 ? dailyData.reduce((s, d) => s + (d.bounce_rate || 0), 0) / dailyData.length : 0;
     const avgDuration = dailyData.length > 0 ? dailyData.reduce((s, d) => s + (d.avg_session_duration || 0), 0) / dailyData.length : 0;
@@ -107,7 +107,7 @@ export default function AudiencePage() {
     let sessDelta: number | undefined, pvDelta: number | undefined, usersDelta: number | undefined;
     if (compareEnabled && compareDailyData.length > 0) {
       const prevSess = compareDailyData.reduce((s, d) => s + (d.sessions || 0), 0);
-      const prevPV = compareDailyData.reduce((s, d) => s + (d.pageviews || 0), 0);
+      const prevPV = compareDailyData.reduce((s, d) => s + (d.page_views || 0), 0);
       const prevUsers = compareDailyData.reduce((s, d) => s + (d.users || 0), 0);
       sessDelta = prevSess > 0 ? ((totalSess - prevSess) / prevSess) * 100 : 0;
       pvDelta = prevPV > 0 ? ((totalPV - prevPV) / prevPV) * 100 : 0;
