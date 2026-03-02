@@ -188,47 +188,47 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Team */}
+      {/* Account */}
       <div className="animate-in" style={{ animationDelay: '300ms', animationFillMode: 'both' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
           <Users size={18} style={{ color: PURPLE }} />
-          <h2 style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>Team Members</h2>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>Account</h2>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 8 }}>
-          {[
-            { name: 'Keith', role: 'Admin', initials: 'KS', color: TEAL, email: 'keith@pointhacks.com.au', status: 'online' },
-            { name: 'Daniel', role: 'Editor', initials: 'DW', color: NAVY, email: 'daniel@pointhacks.com.au', status: 'online' },
-            { name: 'Sarah', role: 'SEO Lead', initials: 'SM', color: PURPLE, email: 'sarah@pointhacks.com.au', status: 'away' },
-            { name: 'James', role: 'Content', initials: 'JL', color: GOLD, email: 'james@pointhacks.com.au', status: 'offline' },
-          ].map(member => (
-            <div key={member.name} style={{
-              padding: '16px 18px', borderRadius: 14,
-              background: '#2A2A2A', border: '1px solid #333333',
-              display: 'flex', alignItems: 'center', gap: 14,
+        <div style={{
+          padding: '20px 24px', borderRadius: 16,
+          background: '#2A2A2A', border: '1px solid #333333',
+          display: 'flex', alignItems: 'center', gap: 18,
+        }}>
+          <div style={{ position: 'relative' }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: '50%',
+              background: `${TEAL}20`, border: `2px solid ${TEAL}40`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 16, fontWeight: 800, color: TEAL,
             }}>
-              <div style={{ position: 'relative' }}>
-                <div style={{
-                  width: 38, height: 38, borderRadius: '50%',
-                  background: `${member.color}20`, border: `2px solid ${member.color}40`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 12, fontWeight: 800, color: member.color,
-                }}>
-                  {member.initials}
-                </div>
-                <div style={{
-                  position: 'absolute', bottom: -1, right: -1,
-                  width: 10, height: 10, borderRadius: '50%',
-                  background: member.status === 'online' ? TEAL : member.status === 'away' ? GOLD : '#383838',
-                  border: '2px solid #1E1E1E',
-                }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'white' }}>{member.name}</div>
-                <div style={{ fontSize: 11, color: '#707070' }}>{member.role} · {member.email}</div>
-              </div>
+              PH
             </div>
-          ))}
+            <div style={{
+              position: 'absolute', bottom: 0, right: 0,
+              width: 12, height: 12, borderRadius: '50%',
+              background: TEAL, border: '2px solid #1E1E1E',
+            }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>Point Hacks</div>
+            <div style={{ fontSize: 12, color: '#707070', marginTop: 2 }}>team@pointhacks.com.au</div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              {connections.filter(c => c.status === 'connected').map(c => (
+                <span key={c.name} style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 600, background: `${c.color}15`, color: c.color }}>
+                  {c.name.split(' ')[0]}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <span style={{ padding: '4px 12px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: `${TEAL}15`, color: TEAL }}>Active</span>
+          </div>
         </div>
       </div>
 
@@ -245,8 +245,8 @@ export default function SettingsPage() {
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: 'white' }}>Access Code Authentication</div>
-              <div style={{ fontSize: 12, color: '#707070' }}>8-digit access code required to enter dashboard</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'white' }}>Password Authentication</div>
+              <div style={{ fontSize: 12, color: '#707070' }}>Password required to enter dashboard</div>
             </div>
             <span style={{ padding: '4px 12px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: `${TEAL}15`, color: TEAL }}>Active</span>
           </div>

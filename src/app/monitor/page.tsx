@@ -176,6 +176,7 @@ export default function MonitorPage() {
 
   const [saving, setSaving] = useState<Record<string, boolean>>({})
   const [results, setResults] = useState<Record<string, any>>({})
+  const [fixModal, setFixModal] = useState<{ alert: Alert; loading: boolean; result: any } | null>(null)
 
   function setAction(alertId: string, action: AlertAction) {
     setAlertActions(prev => {
@@ -210,6 +211,32 @@ export default function MonitorPage() {
       }))
     } catch (err: any) {
       setResults(prev => ({ ...prev, [alert.id]: { error: err.message } }))
+    }
+    setSaving(prev => ({ ...prev, [alert.id]: false }))
+  }
+
+  async function handleRecommendedFix(alert: Alert) {
+    setFixModal({ alert, loading: true, result: null })
+    setSaving(prev => ({ ...prev, [alert.id]: true }))
+    try {
+      const resp = await fetch('/api/alert-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          alertId: alert.id, alertTitle: alert.title, alertType: alert.type,
+          query: alert.query, page: alert.page, action: 'recommended_fix',
+          position: parseFloat(alert.current) || null,
+          ctr: alert.metric === 'CTR' ? parseFloat(alert.current) / 100 : null,
+        }),
+      })
+      const data = await resp.json()
+      setFixModal({ alert, loading: false, result: data.result || data })
+      setResolvedAlertIds(prev => ({
+        ...prev,
+        [alert.id]: { id: data.actionId || '', alert_id: alert.id, action: 'recommended_fix', status: 'completed', completed_at: new Date().toISOString() }
+      }))
+    } catch (err: any) {
+      setFixModal({ alert, loading: false, result: { error: err.message } })
     }
     setSaving(prev => ({ ...prev, [alert.id]: false }))
   }
@@ -700,47 +727,28 @@ export default function MonitorPage() {
                               {/* Action buttons — only for unresolved */}
                               {!alert.resolved && (
                                 <div className="flex flex-wrap items-center gap-2 mt-3">
-                                  <div className="flex flex-wrap gap-2 flex-1">
-                                    {([
-                                      { key: 'ignore' as AlertAction, label: 'Ignore', bg: '#ffffff', activeBg: '#6b7280', activeText: '#fff' },
-                                      { key: 'fix' as AlertAction, label: 'Fix', bg: '#34D399', activeBg: '#34D399', activeText: '#fff' },
-                                      { key: 'analysis' as AlertAction, label: 'Analysis', bg: '#404040', activeBg: '#6366f1', activeText: '#fff' },
-                                      { key: 'implement' as AlertAction, label: 'Implement', bg: '#8B5CF6', activeBg: '#8B5CF6', activeText: '#fff' },
-                                    ]).map(btn => {
-                                      const active = alertActions[alert.id] === btn.key
-                                      return (
-                                        <button
-                                          key={btn.label}
-                                          onClick={() => setAction(alert.id, btn.key)}
-                                          style={{
-                                            padding: '8px 14px', borderRadius: 8, fontSize: '0.75rem', fontWeight: 600,
-                                            cursor: 'pointer', minHeight: 36, transition: 'all 0.15s ease',
-                                            border: active ? 'none' : `1.5px solid ${btn.bg}`,
-                                            background: active ? btn.activeBg : 'transparent',
-                                            color: active ? btn.activeText : btn.bg,
-                                            opacity: alertActions[alert.id] && !active ? 0.35 : 1,
-                                          }}
-                                        >
-                                          {active ? '\u2713 ' : ''}{btn.label}
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                  {alertActions[alert.id] && (
-                                    <button
-                                      onClick={() => handleSave(alert)}
-                                      disabled={saving[alert.id]}
-                                      style={{
-                                        padding: '6px 16px', borderRadius: 8, fontSize: '0.75rem', fontWeight: 700,
-                                        cursor: saving[alert.id] ? 'wait' : 'pointer', border: 'none',
-                                        background: saving[alert.id] ? '#383838' : '#34D399',
-                                        color: '#fff', transition: 'all 0.15s ease', whiteSpace: 'nowrap',
-                                        opacity: saving[alert.id] ? 0.7 : 1,
-                                      }}
-                                    >
-                                      {saving[alert.id] ? 'Running...' : results[alert.id] ? 'Done' : 'Save & Resolve'}
-                                    </button>
-                                  )}
+                                  <button
+                                    onClick={() => { setAction(alert.id, 'ignore'); setTimeout(() => handleSave({ ...alert }), 50) }}
+                                    disabled={saving[alert.id]}
+                                    style={{
+                                      padding: '8px 14px', borderRadius: 8, fontSize: '0.75rem', fontWeight: 600,
+                                      cursor: 'pointer', minHeight: 36, transition: 'all 0.15s ease',
+                                      border: '1.5px solid #ffffff', background: 'transparent', color: '#ffffff',
+                                    }}
+                                  >
+                                    Ignore
+                                  </button>
+                                  <button
+                                    onClick={() => { setAction(alert.id, 'recommended_fix' as AlertAction); handleRecommendedFix(alert) }}
+                                    disabled={saving[alert.id]}
+                                    style={{
+                                      padding: '8px 14px', borderRadius: 8, fontSize: '0.75rem', fontWeight: 600,
+                                      cursor: 'pointer', minHeight: 36, transition: 'all 0.15s ease',
+                                      border: 'none', background: '#34D399', color: '#fff',
+                                    }}
+                                  >
+                                    {saving[alert.id] ? 'Analyzing...' : 'Recommended Fix'}
+                                  </button>
                                 </div>
                               )}
                               {/* Result panel */}
@@ -833,6 +841,79 @@ export default function MonitorPage() {
                 })}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Recommended Fix Modal */}
+      {fixModal && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={() => setFixModal(null)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.7)' }} />
+          <div style={{ position: 'relative', width: '90%', maxWidth: 600, maxHeight: '80vh', overflowY: 'auto', background: '#1A1A1A', border: '1px solid #383838', borderRadius: 16, padding: 0 }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #333333', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, color: 'white', margin: 0 }}>Recommended Fix</h3>
+                <p style={{ fontSize: '0.78rem', color: '#8C8C8C', margin: '4px 0 0' }}>{fixModal.alert.title}</p>
+              </div>
+              <button onClick={() => setFixModal(null)} style={{ background: '#383838', border: 'none', borderRadius: 8, padding: '6px 12px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>Close</button>
+            </div>
+            {/* Content */}
+            <div style={{ padding: '20px 24px' }}>
+              {fixModal.loading ? (
+                <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+                  <div style={{ width: 32, height: 32, border: '2px solid #34D399', borderTopColor: 'transparent', borderRadius: '50%', margin: '0 auto 1rem', animation: 'spin 1s linear infinite' }} />
+                  <p style={{ color: '#8C8C8C' }}>Generating analysis...</p>
+                </div>
+              ) : fixModal.result?.error ? (
+                <p style={{ color: '#f87171' }}>Error: {fixModal.result.error}</p>
+              ) : fixModal.result?.recommendation ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  <div>
+                    <h4 style={{ fontSize: '0.8rem', fontWeight: 700, color: '#34D399', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Problem Summary</h4>
+                    <p style={{ fontSize: '0.85rem', color: '#CECECE', lineHeight: 1.6 }}>{fixModal.result.recommendation.summary}</p>
+                  </div>
+                  <div>
+                    <h4 style={{ fontSize: '0.8rem', fontWeight: 700, color: '#F59E0B', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Root Cause</h4>
+                    <p style={{ fontSize: '0.85rem', color: '#CECECE', lineHeight: 1.6 }}>{fixModal.result.recommendation.rootCause}</p>
+                  </div>
+                  <div>
+                    <h4 style={{ fontSize: '0.8rem', fontWeight: 700, color: '#6366f1', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Recommended Fix</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {fixModal.result.recommendation.steps?.map((step: string, i: number) => (
+                        <div key={i} style={{ display: 'flex', gap: 10, fontSize: '0.85rem', color: '#CECECE' }}>
+                          <span style={{ color: '#34D399', fontWeight: 700, flexShrink: 0 }}>{i + 1}.</span>
+                          <span>{step}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '1rem' }}>
+                    <div style={{ flex: 1, padding: '12px', borderRadius: 10, background: '#2A2A2A' }}>
+                      <div style={{ fontSize: '0.7rem', color: '#8C8C8C', marginBottom: 4 }}>Priority</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: fixModal.result.recommendation.priority === 'high' ? '#EF4444' : fixModal.result.recommendation.priority === 'medium' ? '#F59E0B' : '#34D399' }}>
+                        {fixModal.result.recommendation.priority?.charAt(0).toUpperCase() + fixModal.result.recommendation.priority?.slice(1)}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, padding: '12px', borderRadius: 10, background: '#2A2A2A' }}>
+                      <div style={{ fontSize: '0.7rem', color: '#8C8C8C', marginBottom: 4 }}>Estimated Impact</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#34D399' }}>{fixModal.result.recommendation.impact}</div>
+                    </div>
+                  </div>
+                </div>
+              ) : fixModal.result?.tasks ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {fixModal.result.tasks.map((task: any, i: number) => (
+                    <div key={i} style={{ padding: '12px', borderRadius: 10, background: '#2A2A2A' }}>
+                      <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'white', marginBottom: 4 }}>{task.title}</div>
+                      <div style={{ fontSize: '0.78rem', color: '#9A9A9A', lineHeight: 1.5 }}>{task.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ color: '#8C8C8C' }}>{fixModal.result?.message || 'Analysis complete.'}</p>
+              )}
+            </div>
           </div>
         </div>
       )}

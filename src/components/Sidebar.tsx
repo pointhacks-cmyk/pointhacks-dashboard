@@ -11,7 +11,6 @@ import {
   MessageCircle,
   X,
   Users,
-  PenTool,
   Shield,
   Settings,
   LogOut,
@@ -26,7 +25,6 @@ const navSections = [
       { name: 'Monitor', href: '/monitor', icon: Shield, emphasis: true },
       { name: 'Search & SEO', href: '/search', icon: Search },
       { name: 'SEO Intelligence', href: '/seo', icon: LinkIcon },
-      { name: 'Content Queue', href: '/content', icon: PenTool },
       { name: 'Audience', href: '/audience', icon: Users },
     ],
   },
@@ -48,19 +46,14 @@ const navSections = [
 const COLLAPSED_W = 68
 const EXPANDED_W = 250
 
-const teamMembers = [
-  { name: 'Keith', role: 'Admin', initials: 'KS', color: '#34D399', email: 'keith@pointhacks.com.au', status: 'online' },
-  { name: 'Daniel', role: 'Editor', initials: 'DW', color: '#6366f1', email: 'daniel@pointhacks.com.au', status: 'online' },
-  { name: 'Sarah', role: 'SEO Lead', initials: 'SM', color: '#8B5CF6', email: 'sarah@pointhacks.com.au', status: 'away' },
-  { name: 'James', role: 'Content', initials: 'JL', color: '#F59E0B', email: 'james@pointhacks.com.au', status: 'offline' },
-]
+const activeAccount = { name: 'Point Hacks', role: 'Admin', initials: 'PH', color: '#34D399', email: 'team@pointhacks.com.au', status: 'online' as const }
 
 export default function Sidebar() {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const activeUser = teamMembers[0] // Keith is active user
+  const activeUser = activeAccount
 
   // Listen for mobile hamburger toggle
   useEffect(() => {
@@ -174,66 +167,7 @@ export default function Sidebar() {
           ))}
         </nav>
 
-        {/* Team Avatars (collapsed: stacked, expanded: list) */}
-        {show && (
-          <div style={{ padding: '8px 10px', borderTop: '1px solid #333333' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: '#606060', padding: '0 8px 8px' }}>
-              TEAM
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {teamMembers.map(member => (
-                <div key={member.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 8 }}>
-                  <div style={{ position: 'relative', flexShrink: 0 }}>
-                    <div style={{
-                      width: 28, height: 28, borderRadius: '50%',
-                      background: `${member.color}25`, border: `1.5px solid ${member.color}50`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 10, fontWeight: 700, color: member.color,
-                    }}>
-                      {member.initials}
-                    </div>
-                    <div style={{
-                      position: 'absolute', bottom: -1, right: -1,
-                      width: 9, height: 9, borderRadius: '50%',
-                      background: member.status === 'online' ? '#34D399' : member.status === 'away' ? '#F59E0B' : '#404040',
-                      border: '2px solid #1E1E1E',
-                    }} />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#ECECEC', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.name}</div>
-                    <div style={{ fontSize: 10, color: '#606060' }}>{member.role}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {!show && (
-          <div style={{ padding: '8px 0 4px', borderTop: '1px solid #333333', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-            {teamMembers.slice(0, 3).map(member => (
-              <div key={member.name} title={`${member.name} - ${member.status}`} style={{ position: 'relative' }}>
-                <div style={{
-                  width: 26, height: 26, borderRadius: '50%',
-                  background: `${member.color}25`, border: `1.5px solid ${member.color}40`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 9, fontWeight: 700, color: member.color,
-                }}>
-                  {member.initials}
-                </div>
-                <div style={{
-                  position: 'absolute', bottom: -1, right: -1,
-                  width: 8, height: 8, borderRadius: '50%',
-                  background: member.status === 'online' ? '#34D399' : member.status === 'away' ? '#F59E0B' : '#404040',
-                  border: '2px solid #1E1E1E',
-                }} />
-              </div>
-            ))}
-            {teamMembers.length > 3 && (
-              <div style={{ fontSize: 9, color: '#4A4A4A', fontWeight: 600 }}>+{teamMembers.length - 3}</div>
-            )}
-          </div>
-        )}
+        {/* Account indicator */}
 
         {/* Profile / Account */}
         <div style={{ borderTop: '1px solid #333333', position: 'relative' }}>

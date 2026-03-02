@@ -228,6 +228,77 @@ function buildResult(action: string, alertType: string, query: string | null, pa
         ],
       }
 
+    case 'recommended_fix': {
+      // Build a structured recommendation based on alert type
+      const summaries: Record<string, { summary: string; rootCause: string; steps: string[]; priority: string; impact: string }> = {
+        position_drop: {
+          summary: `The query "${query || 'unknown'}" has dropped in position, which directly impacts click volume and traffic from search.`,
+          rootCause: 'Likely causes include content staleness, increased competition, algorithm updates, or loss of backlinks. Competitors may have published fresher, more comprehensive content.',
+          steps: [
+            'Update the page content with current data, offers, and comparisons',
+            'Audit and improve internal linking — add 3-5 links from high-authority pages',
+            'Google the query and compare your content depth vs top 3 competitors',
+            'Check Core Web Vitals via PageSpeed Insights',
+            'Submit URL for re-indexing in Search Console',
+          ],
+          priority: 'high',
+          impact: `Recovery could restore ~${Math.round((pos || 5) * 50)} clicks/month`,
+        },
+        ctr_anomaly: {
+          summary: `The query "${query || 'unknown'}" has a CTR of ${ctrPct}% which is significantly below expected for its position. Users are seeing but not clicking.`,
+          rootCause: 'The title tag and meta description likely aren\'t compelling enough. May also be missing rich snippets or structured data that competitors have.',
+          steps: [
+            'Rewrite the title tag — front-load keyword, add current year, include value proposition',
+            'Rewrite meta description with clear CTA and unique selling point',
+            'Add FAQ schema or Review schema for rich snippet eligibility',
+            'Check SERP appearance vs competitors for visual differences',
+            'Monitor CTR for 2-3 weeks after changes',
+          ],
+          priority: 'high',
+          impact: 'Improving CTR to expected levels could 2-3x click volume',
+        },
+        traffic_drop: {
+          summary: `Traffic to ${page ? page.replace('https://www.pointhacks.com.au', '') : 'this page'} has dropped significantly week-over-week.`,
+          rootCause: 'Could be seasonal, position drops on key queries, content cannibalisation, or technical issues like slow load times or indexing problems.',
+          steps: [
+            'Check Search Console for which specific queries lost clicks',
+            'Verify the page is still indexed (search site:url in Google)',
+            'Check for content cannibalisation with similar pages',
+            'Refresh content with current offers and add "Last updated" date',
+            'Review page speed and mobile experience',
+          ],
+          priority: 'medium',
+          impact: 'Addressing the root cause typically recovers 60-80% of lost traffic',
+        },
+        disappeared: {
+          summary: `The query "${query || 'unknown'}" had clicks last week but zero this week — it may have dropped out of visible rankings.`,
+          rootCause: 'The page may have been de-indexed, a redirect may have broken, or a competitor\'s new content displaced your ranking entirely.',
+          steps: [
+            'Search for the query in Google to check if your page still appears',
+            'Check Search Console > Pages for any indexing errors',
+            'Verify no accidental noindex tags or broken redirects',
+            'If content is thin, consider a major content refresh or merge with stronger page',
+          ],
+          priority: 'high',
+          impact: 'Re-ranking for this query could recover all previously lost traffic',
+        },
+      }
+
+      const rec = summaries[alertType] || {
+        summary: `Alert detected for "${query || page || 'unknown'}". This needs investigation.`,
+        rootCause: 'Multiple factors may contribute. Review Search Console data and recent site changes.',
+        steps: ['Review the alert details in Search Console', 'Compare current vs historical performance', 'Identify and address the root cause', 'Monitor for improvement'],
+        priority: 'medium',
+        impact: 'Varies based on root cause',
+      }
+
+      return {
+        status: 'recommended_fix',
+        heading: 'Recommended Fix',
+        recommendation: rec,
+      }
+    }
+
     default:
       return { status: 'unknown', heading: 'Unknown Action', message: 'Action not recognized.' }
   }

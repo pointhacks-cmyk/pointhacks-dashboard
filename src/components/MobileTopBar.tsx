@@ -13,7 +13,7 @@ const pageTitles: Record<string, string> = {
   '/chat': 'AI Chat',
   '/settings': 'Settings',
   '/monitor': 'Monitor',
-  '/content': 'Content Queue',
+
   '/audience': 'Audience',
 }
 
