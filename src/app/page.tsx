@@ -7,7 +7,8 @@ import { fetchAllRows, aggregateRows } from '@/lib/dataHelpers'
 import {
   MousePointerClick, Eye, Target, Search, TrendingUp, TrendingDown,
   Globe, FileText, BarChart3, PieChart as PieIcon, Lightbulb, Layers,
-  ArrowUpRight, ArrowDownRight, Minus, Loader2, DollarSign, Star
+  ArrowUpRight, ArrowDownRight, Minus, Loader2, DollarSign, Star,
+  Users, CreditCard, Banknote, Database
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -61,6 +62,8 @@ export default function OverviewPage() {
   const [clickOutKPI, setClickOutKPI] = useState<{ total: number; topPages: { page: string; clicks: number }[] }>({ total: 0, topPages: [] })
   const [trendsData, setTrendsData] = useState<{ keywords: string[]; timeline: any[]; risingRelated: any[]; topRelated: any[] } | null>(null)
   const [trendsLoading, setTrendsLoading] = useState(true)
+  const [funnelData, setFunnelData] = useState<any[]>([])
+  const [funnelTarget, setFunnelTarget] = useState<number>(0)
 
   useEffect(() => {
     async function load() {
@@ -185,6 +188,19 @@ export default function OverviewPage() {
       setTrendsLoading(false)
     }
     loadTrends()
+  }, [])
+
+  // Fetch weekly funnel + GP target (from Excel data)
+  useEffect(() => {
+    async function loadFunnel() {
+      const [funnelRes, targetRes] = await Promise.all([
+        supabase.from('weekly_funnel').select('*').order('week_ending', { ascending: true }),
+        supabase.from('financial_targets').select('monthly_gp_target').limit(1),
+      ])
+      if (funnelRes.data) setFunnelData(funnelRes.data)
+      if (targetRes.data?.[0]) setFunnelTarget(targetRes.data[0].monthly_gp_target)
+    }
+    loadFunnel()
   }, [])
 
   // Derived data
@@ -341,6 +357,112 @@ export default function OverviewPage() {
           </div>
         ))}
       </div>
+
+      {/* Weekly Business Funnel (Source: Internal P&L Spreadsheet) */}
+      {funnelData.length > 0 && (
+        <div className="animate-in" style={{ animationDelay: '200ms', animationFillMode: 'both' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <Database size={14} style={{ color: '#F59E0B' }} />
+            <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full" style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
+              Source: Internal P&amp;L
+            </span>
+          </div>
+
+          {/* Funnel KPIs - latest week */}
+          {(() => {
+            const latest = funnelData[funnelData.length - 1]
+            const prev = funnelData.length >= 2 ? funnelData[funnelData.length - 2] : null
+            const delta = (curr: number, p: number) => p ? ((curr - p) / Math.abs(p)) * 100 : 0
+            const weekLabel = new Date(latest.week_ending).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+            return (
+              <>
+                <p className="text-xs text-secondary mb-3">Week ending {weekLabel}{funnelTarget > 0 && ` · Monthly GP Target: $${(funnelTarget / 1000).toFixed(0)}K`}</p>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                  {[
+                    { label: 'Weekly Gross Profit', value: Number(latest.gross_profit), prev: prev ? Number(prev.gross_profit) : null, icon: DollarSign, color: TEAL, prefix: '$' },
+                    { label: 'Weekly Revenue', value: Number(latest.revenue), prev: prev ? Number(prev.revenue) : null, icon: Banknote, color: GOLD, prefix: '$' },
+                    { label: 'Unique Visitors', value: Number(latest.unique_visitors), prev: prev ? Number(prev.unique_visitors) : null, icon: Users, color: NAVY, prefix: '' },
+                    { label: 'Marketing Costs', value: Number(latest.marketing_costs), prev: prev ? Number(prev.marketing_costs) : null, icon: CreditCard, color: RED, prefix: '$' },
+                  ].map((item, i) => {
+                    const d = item.prev != null ? delta(item.value, item.prev) : null
+                    return (
+                      <div key={item.label} className="glass-card p-5">
+                        <div className="flex justify-between items-start mb-3">
+                          <span className="text-[11px] text-secondary uppercase tracking-wider font-medium">{item.label}</span>
+                          <item.icon size={16} style={{ color: item.color }} />
+                        </div>
+                        <div className="flex items-end gap-2">
+                          <span className="text-2xl font-extrabold text-white">
+                            {item.prefix === '$' ? `$${(item.value / 1000).toFixed(1)}K` : fmt(item.value)}
+                          </span>
+                          {d != null && (
+                            <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${d >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {d >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                              {Math.abs(d).toFixed(1)}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )
+          })()}
+
+          {/* GP Trend + Brand Split */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-2">
+            <div className="glass-card-static p-6">
+              <h2 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+                <TrendingUp size={16} style={{ color: TEAL }} /> Weekly Gross Profit
+              </h2>
+              <p className="text-xs text-secondary mb-4">Trend across weeks</p>
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={funnelData.map(f => ({
+                  week: new Date(f.week_ending).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }),
+                  gp: Number(f.gross_profit),
+                  revenue: Number(f.revenue),
+                }))} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradGP" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={TEAL} stopOpacity={0.4} />
+                      <stop offset="100%" stopColor={TEAL} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333333" />
+                  <XAxis dataKey="week" tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}K`} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="gp" name="Gross Profit" stroke={TEAL} strokeWidth={2} fill="url(#gradGP)" />
+                  <Area type="monotone" dataKey="revenue" name="Revenue" stroke={GOLD} strokeWidth={1.5} fill="none" strokeDasharray="4 4" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="glass-card-static p-6">
+              <h2 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+                <BarChart3 size={16} style={{ color: PURPLE }} /> Brand Split
+              </h2>
+              <p className="text-xs text-secondary mb-4">Point Hacks vs Australian Frequent Flyer</p>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={funnelData.map(f => ({
+                  week: new Date(f.week_ending).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }),
+                  'Point Hacks': Number(f.ph_gross_profit),
+                  'AFF': Number(f.aff_gross_profit),
+                }))} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333333" />
+                  <XAxis dataKey="week" tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}K`} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="Point Hacks" stackId="a" fill={TEAL} radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="AFF" stackId="a" fill={PURPLE} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 2. Traffic Trend Chart */}
       {dailyChart.length > 0 && (

@@ -3,7 +3,11 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useDateRange } from '@/lib/DateRangeContext';
-import { Users, Monitor, Globe, BarChart3, TrendingUp, Database, Activity } from 'lucide-react';
+import { Users, Monitor, Globe, BarChart3, TrendingUp, Database, Activity, Instagram, Youtube, Mail, Hash, Trophy } from 'lucide-react';
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  CartesianGrid, Legend, LineChart, Line, BarChart, Bar, Cell
+} from 'recharts';
 
 const TEAL = '#34D399', RED = '#EF4444', NAVY = '#6366f1', GOLD = '#F59E0B', PURPLE = '#8B5CF6'
 
@@ -32,6 +36,7 @@ export default function AudiencePage() {
   const [totalSessions, setTotalSessions] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [audienceMetrics, setAudienceMetrics] = useState<any[]>([]);
 
   function aggregateSources(rows: TrafficRow[]): { sources: SourceSummary[]; total: number } {
     const map = new Map<string, number>();
@@ -55,10 +60,12 @@ export default function AudiencePage() {
       setLoading(true);
       setError(null);
       try {
-        const [srcRes, dailyRes] = await Promise.all([
+        const [srcRes, dailyRes, amRes] = await Promise.all([
           supabase.from('ga4_traffic_sources').select('source, medium, sessions, date').gte('date', startDate).lte('date', endDate),
           supabase.from('ga4_daily').select('*').gte('date', startDate).lte('date', endDate).order('date', { ascending: true }),
+          supabase.from('audience_metrics').select('*').order('month', { ascending: true }),
         ]);
+        if (amRes.data) setAudienceMetrics(amRes.data);
 
         if (srcRes.error) throw srcRes.error;
         if (dailyRes.error) throw dailyRes.error;
@@ -311,6 +318,140 @@ export default function AudiencePage() {
             </div>
           )}
         </>
+      )}
+
+      {/* ═══ Social & Audience Growth (Source: Internal P&L Spreadsheet) ═══ */}
+      {audienceMetrics.length > 0 && (
+        <div className="space-y-6" style={{ marginTop: '2rem' }}>
+          {/* Source label */}
+          <div className="flex items-center gap-2">
+            <Database size={14} style={{ color: '#F59E0B' }} />
+            <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}>
+              Source: Internal P&amp;L Spreadsheet
+            </span>
+          </div>
+
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'white' }}>Social &amp; Audience Growth</h2>
+
+          {/* Latest month KPI cards */}
+          {(() => {
+            const latest = audienceMetrics[audienceMetrics.length - 1]
+            const prev = audienceMetrics.length >= 2 ? audienceMetrics[audienceMetrics.length - 2] : null
+            const delta = (c: number, p: number) => p ? ((c - p) / Math.abs(p)) * 100 : 0
+            const fmtK = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}K` : n.toLocaleString()
+            const monthLabel = new Date(latest.month).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
+            const cards = [
+              { label: 'Facebook', value: latest.facebook_followers, prev: prev?.facebook_followers, color: '#1877F2' },
+              { label: 'Instagram', value: latest.instagram_followers, prev: prev?.instagram_followers, color: '#E4405F' },
+              { label: 'TikTok', value: latest.tiktok_followers, prev: prev?.tiktok_followers, color: '#00f2ea' },
+              { label: 'YouTube', value: latest.youtube_subscribers, prev: prev?.youtube_subscribers, color: '#FF0000' },
+              { label: 'Email Subs', value: latest.email_subscribers, prev: prev?.email_subscribers, color: TEAL },
+            ]
+            return (
+              <>
+                <p className="text-secondary" style={{ fontSize: '0.8rem' }}>As of {monthLabel}</p>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 animate-in" style={{ animationDelay: '300ms', animationFillMode: 'both' }}>
+                  {cards.map(c => {
+                    const d = c.prev ? delta(c.value, c.prev) : null
+                    return (
+                      <div key={c.label} className="glass-card" style={{ padding: '1.25rem' }}>
+                        <div style={{ fontSize: '0.7rem', color: '#8C8C8C', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>{c.label}</div>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'white' }}>{fmtK(c.value)}</div>
+                        {d != null && (
+                          <div style={{ fontSize: '0.7rem', fontWeight: 600, color: d >= 0 ? TEAL : RED, marginTop: 4 }}>
+                            {d >= 0 ? '▲' : '▼'} {Math.abs(d).toFixed(1)}% MoM
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )
+          })()}
+
+          {/* Follower Growth Chart */}
+          <div className="glass-card-static animate-in" style={{ padding: '1.5rem', animationDelay: '350ms', animationFillMode: 'both' }}>
+            <h2 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <TrendingUp size={16} style={{ color: TEAL }} /> Follower Growth Over Time
+            </h2>
+            <p style={{ fontSize: '0.7rem', color: '#606060', marginBottom: '1rem' }}>Monthly totals across platforms</p>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={audienceMetrics.map(m => ({
+                month: new Date(m.month).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }),
+                Facebook: m.facebook_followers,
+                Instagram: m.instagram_followers,
+                TikTok: m.tiktok_followers,
+                YouTube: m.youtube_subscribers,
+              }))} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333333" />
+                <XAxis dataKey="month" tick={{ fill: '#8A8A8A', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : String(v)} />
+                <Tooltip contentStyle={{ background: '#2A2A2A', border: '1px solid #383838', borderRadius: 8, fontSize: 12 }} formatter={(v: any) => Number(v).toLocaleString()} />
+                <Legend wrapperStyle={{ fontSize: 11, color: '#8C8C8C' }} />
+                <Line type="monotone" dataKey="Facebook" stroke="#1877F2" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="Instagram" stroke="#E4405F" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="TikTok" stroke="#00f2ea" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="YouTube" stroke="#FF0000" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Email Subscribers Growth */}
+          <div className="glass-card-static animate-in" style={{ padding: '1.5rem', animationDelay: '400ms', animationFillMode: 'both' }}>
+            <h2 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Mail size={16} style={{ color: TEAL }} /> Email Subscriber Growth
+            </h2>
+            <p style={{ fontSize: '0.7rem', color: '#606060', marginBottom: '1rem' }}>Newsletter subscriber count over time</p>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={audienceMetrics.map(m => ({
+                month: new Date(m.month).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }),
+                subscribers: m.email_subscribers,
+              }))} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gradEmail" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={TEAL} stopOpacity={0.3} />
+                    <stop offset="100%" stopColor={TEAL} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333333" />
+                <XAxis dataKey="month" tick={{ fill: '#8A8A8A', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}K`} />
+                <Tooltip contentStyle={{ background: '#2A2A2A', border: '1px solid #383838', borderRadius: 8, fontSize: 12 }} formatter={(v: any) => Number(v).toLocaleString()} />
+                <Area type="monotone" dataKey="subscribers" stroke={TEAL} strokeWidth={2} fill="url(#gradEmail)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Keyword Rankings vs Competitors */}
+          {audienceMetrics.some(m => m.ph_top3_keywords > 0) && (
+            <div className="glass-card-static animate-in" style={{ padding: '1.5rem', animationDelay: '450ms', animationFillMode: 'both' }}>
+              <h2 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Trophy size={16} style={{ color: GOLD }} /> Top 3 Keyword Rankings vs Competitors
+              </h2>
+              <p style={{ fontSize: '0.7rem', color: '#606060', marginBottom: '1rem' }}>Top 500 keywords — positions 1-3 count by month</p>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={audienceMetrics.filter(m => m.ph_top3_keywords > 0).map(m => ({
+                  month: new Date(m.month).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }),
+                  'Point Hacks': m.ph_top3_keywords,
+                  'AFF': m.aff_top3_keywords,
+                  'Finder': Math.round(m.finder_top3_keywords),
+                  'Exec Traveller': m.exec_traveller_top3_keywords,
+                }))} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333333" />
+                  <XAxis dataKey="month" tick={{ fill: '#8A8A8A', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={{ background: '#2A2A2A', border: '1px solid #383838', borderRadius: 8, fontSize: 12 }} />
+                  <Legend wrapperStyle={{ fontSize: 11, color: '#8C8C8C' }} />
+                  <Line type="monotone" dataKey="Point Hacks" stroke={TEAL} strokeWidth={2.5} dot={false} />
+                  <Line type="monotone" dataKey="AFF" stroke={PURPLE} strokeWidth={1.5} dot={false} />
+                  <Line type="monotone" dataKey="Finder" stroke={RED} strokeWidth={1.5} dot={false} strokeDasharray="4 4" />
+                  <Line type="monotone" dataKey="Exec Traveller" stroke={GOLD} strokeWidth={1.5} dot={false} strokeDasharray="4 4" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
