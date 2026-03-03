@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import {
-  DollarSign, TrendingUp, TrendingDown, BarChart3, Users, MousePointerClick,
-  CreditCard, Filter, Calendar, ArrowUpDown, ChevronDown
+  DollarSign, TrendingUp, TrendingDown, BarChart3, MousePointerClick,
+  CreditCard, ArrowUpDown, ChevronDown
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
@@ -11,7 +11,6 @@ import {
   CartesianGrid, Legend, PieChart, Pie, Cell
 } from 'recharts'
 
-// ── Types ──
 interface PartnerRow {
   date: string
   brand: string
@@ -43,76 +42,45 @@ const PARTNER_COLORS: Record<string, string> = {
   'HSBC': '#DB0011',
 }
 const FALLBACK_COLORS = ['#5FD6BF', '#7B4397', '#ffc107', '#4ade80', '#f472b6', '#60a5fa', '#fb923c']
-
 const PIE_COLORS = ['#006FCF', '#003DA5', '#C8102E', '#D5002B', '#E0001A', '#003B70', '#DB0011']
 
-type DateRange = '7d' | '30d' | '90d' | '12m' | 'all'
-type Brand = 'all' | 'Point Hacks' | 'Australian Frequent Flyer'
+type RangeKey = '7d' | '30d' | '90d' | '12m' | 'all'
+type BrandKey = 'all' | 'Point Hacks' | 'Australian Frequent Flyer'
 
-function formatCurrency(n: number) {
-  if (Math.abs(n) >= 1000000) return `$${(n / 1000000).toFixed(1)}M`
-  if (Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(1)}K`
+function fmtCurrency(n: number) {
+  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
+  if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(1)}K`
   return `$${n.toFixed(0)}`
 }
 
-function formatNumber(n: number) {
-  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
+function fmtNum(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return n.toLocaleString()
 }
 
-function getDateRange(range: DateRange): string {
-  const now = new Date()
+function rangeStart(range: RangeKey): string {
+  const d = new Date()
   switch (range) {
-    case '7d': return new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10)
-    case '30d': return new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10)
-    case '90d': return new Date(now.getTime() - 90 * 86400000).toISOString().slice(0, 10)
-    case '12m': return new Date(now.getTime() - 365 * 86400000).toISOString().slice(0, 10)
+    case '7d': d.setDate(d.getDate() - 7); break
+    case '30d': d.setDate(d.getDate() - 30); break
+    case '90d': d.setDate(d.getDate() - 90); break
+    case '12m': d.setFullYear(d.getFullYear() - 1); break
     case 'all': return '2023-01-01'
   }
+  return d.toISOString().slice(0, 10)
 }
 
-function DeltaBadge({ current, previous }: { current: number; previous: number }) {
-  if (!previous) return null
-  const pct = ((current - previous) / Math.abs(previous)) * 100
-  const up = pct >= 0
-  return (
-    <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${up ? 'text-green-400' : 'text-red-400'}`}>
-      {up ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-      {Math.abs(pct).toFixed(1)}%
-    </span>
-  )
-}
-
-function KpiCard({ label, value, prevValue, icon: Icon, prefix }: {
-  label: string; value: number; prevValue?: number; icon: any; prefix?: string
-}) {
-  return (
-    <div className="glass-card-static p-5">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-zinc-500 uppercase tracking-wide">{label}</span>
-        <Icon size={16} className="text-zinc-500" />
-      </div>
-      <div className="flex items-end gap-2">
-        <span className="text-2xl font-bold text-white">
-          {prefix === '$' ? formatCurrency(value) : formatNumber(value)}
-        </span>
-        {prevValue != null && <DeltaBadge current={value} previous={prevValue} />}
-      </div>
-    </div>
-  )
-}
-
-const CustomTooltip = ({ active, payload, label }: any) => {
+const ChartTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null
   return (
-    <div className="bg-[#2A2A2A] border border-[#383838] rounded-lg px-4 py-3 shadow-xl">
-      <div className="text-xs text-zinc-400 mb-2">{label}</div>
+    <div style={{ background: '#2A2A2A', border: '1px solid #383838', borderRadius: 8, padding: '10px 14px', fontSize: 12 }}>
+      <div style={{ color: '#888', marginBottom: 4 }}>{label}</div>
       {payload.map((p: any, i: number) => (
-        <div key={i} className="flex items-center gap-2 text-sm">
-          <div className="w-2 h-2 rounded-full" style={{ background: p.color }} />
-          <span className="text-zinc-300">{p.name}:</span>
-          <span className="text-white font-medium">{formatCurrency(p.value)}</span>
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 4, background: p.color, display: 'inline-block' }} />
+          <span style={{ color: '#ccc' }}>{p.name}:</span>
+          <span style={{ color: '#fff', fontWeight: 600 }}>{fmtCurrency(p.value)}</span>
         </div>
       ))}
     </div>
@@ -122,122 +90,91 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export default function RevenuePage() {
   const [data, setData] = useState<PartnerRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [range, setRange] = useState<DateRange>('30d')
-  const [brand, setBrand] = useState<Brand>('all')
+  const [range, setRange] = useState<RangeKey>('30d')
+  const [brand, setBrand] = useState<BrandKey>('all')
   const [sortCol, setSortCol] = useState<'gross_profit' | 'revenue' | 'bank_clicks' | 'applications'>('gross_profit')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
 
   useEffect(() => {
+    let cancelled = false
     async function load() {
       setLoading(true)
-      const startDate = getDateRange(range)
-      let query = supabase
-        .from('partner_performance')
-        .select('date, brand, partner, bank_clicks, credit_card_applications, revenue, marketing_expenses, gross_profit')
-        .gte('date', startDate)
-        .order('date', { ascending: true })
-
-      if (brand !== 'all') query = query.eq('brand', brand)
-
-      // Paginate to get all rows
+      const start = rangeStart(range)
       const allRows: PartnerRow[] = []
       let from = 0
-      const pageSize = 1000
       while (true) {
-        const { data: batch, error } = await query.range(from, from + pageSize - 1)
+        let q = supabase
+          .from('partner_performance')
+          .select('date, brand, partner, bank_clicks, credit_card_applications, revenue, marketing_expenses, gross_profit')
+          .gte('date', start)
+          .order('date', { ascending: true })
+          .range(from, from + 999)
+        if (brand !== 'all') q = q.eq('brand', brand)
+        const { data: batch, error } = await q
+        if (cancelled) return
         if (error || !batch || batch.length === 0) break
         allRows.push(...batch)
-        if (batch.length < pageSize) break
-        from += pageSize
+        if (batch.length < 1000) break
+        from += 1000
       }
-      setData(allRows)
-      setLoading(false)
+      if (!cancelled) { setData(allRows); setLoading(false) }
     }
     load()
+    return () => { cancelled = true }
   }, [range, brand])
 
-  // ── Aggregations ──
   const partnerAgg = useMemo<AggPartner[]>(() => {
     const map = new Map<string, AggPartner>()
     for (const r of data) {
       if (r.partner === 'Total') continue
-      const existing = map.get(r.partner) || {
-        partner: r.partner, revenue: 0, gross_profit: 0, bank_clicks: 0,
-        applications: 0, marketing_expenses: 0, margin: 0,
-      }
-      existing.revenue += Number(r.revenue) || 0
-      existing.gross_profit += Number(r.gross_profit) || 0
-      existing.bank_clicks += Number(r.bank_clicks) || 0
-      existing.applications += Number(r.credit_card_applications) || 0
-      existing.marketing_expenses += Number(r.marketing_expenses) || 0
-      map.set(r.partner, existing)
+      const e = map.get(r.partner) || { partner: r.partner, revenue: 0, gross_profit: 0, bank_clicks: 0, applications: 0, marketing_expenses: 0, margin: 0 }
+      e.revenue += Number(r.revenue) || 0
+      e.gross_profit += Number(r.gross_profit) || 0
+      e.bank_clicks += Number(r.bank_clicks) || 0
+      e.applications += Number(r.credit_card_applications) || 0
+      e.marketing_expenses += Number(r.marketing_expenses) || 0
+      map.set(r.partner, e)
     }
-    const arr = Array.from(map.values()).map(p => ({
-      ...p,
-      margin: p.revenue ? (p.gross_profit / p.revenue) * 100 : 0,
-    }))
-    arr.sort((a, b) => sortDir === 'desc' ? b[sortCol] - a[sortCol] : a[sortCol] - b[sortCol])
+    const arr = Array.from(map.values()).map(p => ({ ...p, margin: p.revenue ? (p.gross_profit / p.revenue) * 100 : 0 }))
+    arr.sort((a, b) => sortDir === 'desc' ? (b as any)[sortCol] - (a as any)[sortCol] : (a as any)[sortCol] - (b as any)[sortCol])
     return arr
   }, [data, sortCol, sortDir])
 
-  const totals = useMemo(() => {
-    return partnerAgg.reduce((acc, p) => ({
-      revenue: acc.revenue + p.revenue,
-      gross_profit: acc.gross_profit + p.gross_profit,
-      bank_clicks: acc.bank_clicks + p.bank_clicks,
-      applications: acc.applications + p.applications,
-      marketing_expenses: acc.marketing_expenses + p.marketing_expenses,
-    }), { revenue: 0, gross_profit: 0, bank_clicks: 0, applications: 0, marketing_expenses: 0 })
-  }, [partnerAgg])
+  const totals = useMemo(() => partnerAgg.reduce((a, p) => ({
+    revenue: a.revenue + p.revenue, gross_profit: a.gross_profit + p.gross_profit,
+    bank_clicks: a.bank_clicks + p.bank_clicks, applications: a.applications + p.applications,
+    marketing_expenses: a.marketing_expenses + p.marketing_expenses,
+  }), { revenue: 0, gross_profit: 0, bank_clicks: 0, applications: 0, marketing_expenses: 0 }), [partnerAgg])
 
-  // ── Daily trend (grouped by date, stacked by partner) ──
-  const dailyTrend = useMemo(() => {
-    const map = new Map<string, Record<string, number>>()
+  const chartData = useMemo(() => {
+    const partners = [...new Set(data.filter(r => r.partner !== 'Total').map(r => r.partner))]
+    const dayMap = new Map<string, Record<string, number>>()
     for (const r of data) {
       if (r.partner === 'Total') continue
       const d = r.date.slice(0, 10)
-      if (!map.has(d)) map.set(d, { date: 0 } as any)
-      const entry = map.get(d)!
+      if (!dayMap.has(d)) dayMap.set(d, {})
+      const entry = dayMap.get(d)!
       entry[r.partner] = (entry[r.partner] || 0) + (Number(r.gross_profit) || 0)
     }
-    const partners = [...new Set(data.filter(r => r.partner !== 'Total').map(r => r.partner))]
-    return {
-      data: Array.from(map.entries())
-        .map(([date, vals]) => ({ date, ...vals }))
-        .sort((a, b) => a.date.localeCompare(b.date)),
-      partners,
-    }
-  }, [data])
-
-  // ── Weekly aggregation for cleaner charts on longer ranges ──
-  const chartData = useMemo(() => {
-    if (range === '7d' || range === '30d') return dailyTrend
-    // Aggregate to weekly
-    const map = new Map<string, Record<string, number>>()
-    for (const row of dailyTrend.data) {
-      const d = new Date(row.date)
-      const weekStart = new Date(d.getTime() - d.getDay() * 86400000)
-      const key = weekStart.toISOString().slice(0, 10)
-      if (!map.has(key)) map.set(key, {})
-      const entry = map.get(key)!
-      for (const p of dailyTrend.partners) {
-        entry[p] = (entry[p] || 0) + ((row as any)[p] || 0)
+    let points = Array.from(dayMap.entries()).map(([date, vals]) => ({ date, ...vals })).sort((a, b) => a.date.localeCompare(b.date))
+    // Aggregate to weekly for longer ranges
+    if (range !== '7d' && range !== '30d') {
+      const weekMap = new Map<string, Record<string, number>>()
+      for (const row of points) {
+        const d = new Date(row.date)
+        const ws = new Date(d.getTime() - d.getDay() * 86400000).toISOString().slice(0, 10)
+        if (!weekMap.has(ws)) weekMap.set(ws, {})
+        const e = weekMap.get(ws)!
+        for (const p of partners) e[p] = (e[p] || 0) + ((row as any)[p] || 0)
       }
+      points = Array.from(weekMap.entries()).map(([date, vals]) => ({ date, ...vals })).sort((a, b) => a.date.localeCompare(b.date))
     }
-    return {
-      data: Array.from(map.entries())
-        .map(([date, vals]) => ({ date, ...vals }))
-        .sort((a, b) => a.date.localeCompare(b.date)),
-      partners: dailyTrend.partners,
-    }
-  }, [dailyTrend, range])
+    return { data: points, partners }
+  }, [data, range])
 
-  // Pie data
-  const pieData = useMemo(() => {
-    return partnerAgg
-      .filter(p => p.gross_profit > 0)
-      .map(p => ({ name: p.partner, value: Math.round(p.gross_profit) }))
-  }, [partnerAgg])
+  const pieData = useMemo(() =>
+    partnerAgg.filter(p => p.gross_profit > 0).map(p => ({ name: p.partner, value: Math.round(p.gross_profit) })),
+  [partnerAgg])
 
   const toggleSort = (col: typeof sortCol) => {
     if (sortCol === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
@@ -245,125 +182,105 @@ export default function RevenuePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#1A1A1A] text-white">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <DollarSign size={28} className="text-green-400" />
-              <h1 className="text-2xl font-bold">Revenue &amp; Partners</h1>
-            </div>
-            <p className="text-zinc-400 text-sm">Gross profit, revenue, and application performance by bank partner</p>
-          </div>
-
-          {/* Filters */}
-          <div className="flex gap-2 flex-wrap">
-            {/* Date Range */}
-            <div className="flex bg-[#2A2A2A] rounded-lg border border-[#383838] overflow-hidden">
-              {(['7d', '30d', '90d', '12m', 'all'] as DateRange[]).map(r => (
-                <button
-                  key={r}
-                  onClick={() => setRange(r)}
-                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${range === r ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}
-                >
-                  {r === 'all' ? 'All' : r.toUpperCase()}
-                </button>
-              ))}
-            </div>
-            {/* Brand */}
-            <div className="relative">
-              <select
-                value={brand}
-                onChange={e => setBrand(e.target.value as Brand)}
-                className="appearance-none bg-[#2A2A2A] border border-[#383838] rounded-lg px-3 py-1.5 pr-8 text-xs text-zinc-300 focus:outline-none focus:border-blue-500/50"
-              >
-                <option value="all">All Brands</option>
-                <option value="Point Hacks">Point Hacks</option>
-                <option value="Australian Frequent Flyer">Australian Frequent Flyer</option>
-              </select>
-              <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
-            </div>
-          </div>
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <div className="flex items-center gap-3 mb-1">
+          <DollarSign size={28} className="text-green-400" />
+          <h1 className="text-2xl font-bold text-white">Revenue &amp; Partners</h1>
         </div>
+        <p className="text-zinc-400 text-sm">Gross profit, revenue, and application performance by bank partner</p>
+      </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      {/* Filters */}
+      <div className="flex gap-2 flex-wrap">
+        <div className="flex bg-[#2A2A2A] rounded-lg border border-[#383838] overflow-hidden">
+          {(['7d', '30d', '90d', '12m', 'all'] as RangeKey[]).map(r => (
+            <button key={r} onClick={() => setRange(r)}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${range === r ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+              {r === 'all' ? 'All' : r.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <div className="relative">
+          <select value={brand} onChange={e => setBrand(e.target.value as BrandKey)}
+            className="appearance-none bg-[#2A2A2A] border border-[#383838] rounded-lg px-3 py-1.5 pr-8 text-xs text-zinc-300 focus:outline-none focus:border-blue-500/50">
+            <option value="all">All Brands</option>
+            <option value="Point Hacks">Point Hacks</option>
+            <option value="Australian Frequent Flyer">Australian Frequent Flyer</option>
+          </select>
+          <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {[
+              { label: 'Gross Profit', value: totals.gross_profit, icon: DollarSign, prefix: '$' },
+              { label: 'Revenue', value: totals.revenue, icon: BarChart3, prefix: '$' },
+              { label: 'Bank Clicks', value: totals.bank_clicks, icon: MousePointerClick, prefix: '' },
+              { label: 'Applications', value: totals.applications, icon: CreditCard, prefix: '' },
+              { label: 'Marketing Spend', value: totals.marketing_expenses, icon: TrendingDown, prefix: '$' },
+            ].map(item => (
+              <div key={item.label} className="glass-card-static p-5">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-zinc-500 uppercase tracking-wide">{item.label}</span>
+                  <item.icon size={16} className="text-zinc-500" />
+                </div>
+                <span className="text-2xl font-bold text-white">
+                  {item.prefix === '$' ? fmtCurrency(item.value) : fmtNum(item.value)}
+                </span>
+              </div>
+            ))}
           </div>
-        ) : (
-          <div className="space-y-8">
-            {/* KPI Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <KpiCard label="Gross Profit" value={totals.gross_profit} icon={DollarSign} prefix="$" />
-              <KpiCard label="Revenue" value={totals.revenue} icon={BarChart3} prefix="$" />
-              <KpiCard label="Bank Clicks" value={totals.bank_clicks} icon={MousePointerClick} />
-              <KpiCard label="Applications" value={totals.applications} icon={CreditCard} />
-              <KpiCard label="Marketing Spend" value={totals.marketing_expenses} icon={TrendingDown} prefix="$" />
-            </div>
 
-            {/* GP Trend Chart */}
+          {/* GP Trend Chart */}
+          {chartData.data.length > 0 && (
             <div className="glass-card-static p-6">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                 <TrendingUp size={20} className="text-green-400" />
                 Gross Profit by Partner
               </h2>
-              <div className="h-[350px]">
+              <div style={{ width: '100%', height: 350 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={chartData.data}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fill: '#666', fontSize: 11 }}
-                      tickFormatter={d => {
-                        const dt = new Date(d)
-                        return `${dt.getDate()}/${dt.getMonth() + 1}`
-                      }}
-                    />
-                    <YAxis tick={{ fill: '#666', fontSize: 11 }} tickFormatter={v => formatCurrency(v)} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend
-                      wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
-                      formatter={(v: string) => <span style={{ color: '#aaa' }}>{v}</span>}
-                    />
+                    <XAxis dataKey="date" tick={{ fill: '#666', fontSize: 11 }}
+                      tickFormatter={(d: string) => { const dt = new Date(d); return `${dt.getDate()}/${dt.getMonth() + 1}` }} />
+                    <YAxis tick={{ fill: '#666', fontSize: 11 }} tickFormatter={(v: number) => fmtCurrency(v)} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
                     {chartData.partners.map((p, i) => (
-                      <Area
-                        key={p}
-                        type="monotone"
-                        dataKey={p}
-                        stackId="1"
+                      <Area key={p} type="monotone" dataKey={p} stackId="1"
                         fill={PARTNER_COLORS[p] || FALLBACK_COLORS[i % FALLBACK_COLORS.length]}
                         stroke={PARTNER_COLORS[p] || FALLBACK_COLORS[i % FALLBACK_COLORS.length]}
-                        fillOpacity={0.6}
-                      />
+                        fillOpacity={0.6} />
                     ))}
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
             </div>
+          )}
 
-            {/* Revenue Split + Table */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Pie Chart */}
+          {/* Revenue Split + Table */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Pie */}
+            {pieData.length > 0 && (
               <div className="glass-card-static p-6">
                 <h3 className="text-sm font-semibold text-zinc-300 mb-4">Revenue Share</h3>
-                <div className="h-[250px]">
+                <div style={{ width: '100%', height: 250 }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie
-                        data={pieData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={55}
-                        outerRadius={90}
-                        paddingAngle={2}
-                        dataKey="value"
-                      >
-                        {pieData.map((_, i) => (
-                          <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                        ))}
+                      <Pie data={pieData} cx="50%" cy="50%" innerRadius={55} outerRadius={90} paddingAngle={2} dataKey="value">
+                        {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={(v: any) => formatCurrency(Number(v))} />
+                      <Tooltip formatter={(v: any) => fmtCurrency(Number(v))} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -372,84 +289,85 @@ export default function RevenuePage() {
                     <div key={p.name} className="flex items-center gap-2 text-xs">
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
                       <span className="text-zinc-300 flex-1">{p.name}</span>
-                      <span className="text-zinc-500">{formatCurrency(p.value)}</span>
+                      <span className="text-zinc-500">{fmtCurrency(p.value)}</span>
                     </div>
                   ))}
                 </div>
               </div>
+            )}
 
-              {/* Partner Table */}
-              <div className="glass-card-static overflow-hidden lg:col-span-2">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-[#383838] text-xs text-zinc-500 uppercase">
-                      <th className="text-left p-4">Partner</th>
-                      <th className="text-right p-4 cursor-pointer hover:text-zinc-300" onClick={() => toggleSort('gross_profit')}>
-                        <span className="inline-flex items-center gap-1 justify-end">GP <ArrowUpDown size={12} /></span>
-                      </th>
-                      <th className="text-right p-4 cursor-pointer hover:text-zinc-300" onClick={() => toggleSort('revenue')}>
-                        <span className="inline-flex items-center gap-1 justify-end">Revenue <ArrowUpDown size={12} /></span>
-                      </th>
-                      <th className="text-right p-4 cursor-pointer hover:text-zinc-300 hidden md:table-cell" onClick={() => toggleSort('bank_clicks')}>
-                        <span className="inline-flex items-center gap-1 justify-end">Clicks <ArrowUpDown size={12} /></span>
-                      </th>
-                      <th className="text-right p-4 cursor-pointer hover:text-zinc-300 hidden md:table-cell" onClick={() => toggleSort('applications')}>
-                        <span className="inline-flex items-center gap-1 justify-end">Apps <ArrowUpDown size={12} /></span>
-                      </th>
-                      <th className="text-right p-4 hidden lg:table-cell">Margin</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {partnerAgg.map((p, i) => (
-                      <tr key={p.partner} className="border-b border-[#383838] last:border-0 hover:bg-white/[0.02]">
-                        <td className="p-4">
-                          <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full" style={{ background: PARTNER_COLORS[p.partner] || FALLBACK_COLORS[i] }} />
-                            <span className="text-sm text-white font-medium">{p.partner}</span>
-                          </div>
-                        </td>
-                        <td className="p-4 text-right text-sm text-white font-medium">{formatCurrency(p.gross_profit)}</td>
-                        <td className="p-4 text-right text-sm text-zinc-300">{formatCurrency(p.revenue)}</td>
-                        <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{formatNumber(p.bank_clicks)}</td>
-                        <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{formatNumber(p.applications)}</td>
-                        <td className="p-4 text-right hidden lg:table-cell">
-                          <span className={`text-xs px-2 py-0.5 rounded ${p.margin >= 80 ? 'bg-green-500/20 text-green-400' : p.margin >= 50 ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'}`}>
-                            {p.margin.toFixed(0)}%
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {/* Totals row */}
-                    <tr className="bg-white/[0.03] font-semibold">
-                      <td className="p-4 text-sm text-zinc-300">Total</td>
-                      <td className="p-4 text-right text-sm text-white">{formatCurrency(totals.gross_profit)}</td>
-                      <td className="p-4 text-right text-sm text-zinc-300">{formatCurrency(totals.revenue)}</td>
-                      <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{formatNumber(totals.bank_clicks)}</td>
-                      <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{formatNumber(totals.applications)}</td>
+            {/* Partner Table */}
+            <div className="glass-card-static overflow-hidden lg:col-span-2">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-[#383838] text-xs text-zinc-500 uppercase">
+                    <th className="text-left p-4">Partner</th>
+                    <th className="text-right p-4 cursor-pointer hover:text-zinc-300" onClick={() => toggleSort('gross_profit')}>
+                      <span className="inline-flex items-center gap-1 justify-end">GP <ArrowUpDown size={12} /></span>
+                    </th>
+                    <th className="text-right p-4 cursor-pointer hover:text-zinc-300" onClick={() => toggleSort('revenue')}>
+                      <span className="inline-flex items-center gap-1 justify-end">Revenue <ArrowUpDown size={12} /></span>
+                    </th>
+                    <th className="text-right p-4 cursor-pointer hover:text-zinc-300 hidden md:table-cell" onClick={() => toggleSort('bank_clicks')}>
+                      <span className="inline-flex items-center gap-1 justify-end">Clicks <ArrowUpDown size={12} /></span>
+                    </th>
+                    <th className="text-right p-4 cursor-pointer hover:text-zinc-300 hidden md:table-cell" onClick={() => toggleSort('applications')}>
+                      <span className="inline-flex items-center gap-1 justify-end">Apps <ArrowUpDown size={12} /></span>
+                    </th>
+                    <th className="text-right p-4 hidden lg:table-cell">Margin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {partnerAgg.map((p, i) => (
+                    <tr key={p.partner} className="border-b border-[#383838] last:border-0 hover:bg-white/[0.02]">
+                      <td className="p-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full" style={{ background: PARTNER_COLORS[p.partner] || FALLBACK_COLORS[i] }} />
+                          <span className="text-sm text-white font-medium">{p.partner}</span>
+                        </div>
+                      </td>
+                      <td className="p-4 text-right text-sm text-white font-medium">{fmtCurrency(p.gross_profit)}</td>
+                      <td className="p-4 text-right text-sm text-zinc-300">{fmtCurrency(p.revenue)}</td>
+                      <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(p.bank_clicks)}</td>
+                      <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(p.applications)}</td>
                       <td className="p-4 text-right hidden lg:table-cell">
-                        <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-zinc-300">
-                          {totals.revenue ? ((totals.gross_profit / totals.revenue) * 100).toFixed(0) : 0}%
+                        <span className={`text-xs px-2 py-0.5 rounded ${p.margin >= 80 ? 'bg-green-500/20 text-green-400' : p.margin >= 50 ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'}`}>
+                          {p.margin.toFixed(0)}%
                         </span>
                       </td>
                     </tr>
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                  <tr className="bg-white/[0.03] font-semibold">
+                    <td className="p-4 text-sm text-zinc-300">Total</td>
+                    <td className="p-4 text-right text-sm text-white">{fmtCurrency(totals.gross_profit)}</td>
+                    <td className="p-4 text-right text-sm text-zinc-300">{fmtCurrency(totals.revenue)}</td>
+                    <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(totals.bank_clicks)}</td>
+                    <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(totals.applications)}</td>
+                    <td className="p-4 text-right hidden lg:table-cell">
+                      <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-zinc-300">
+                        {totals.revenue ? ((totals.gross_profit / totals.revenue) * 100).toFixed(0) : 0}%
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
+          </div>
 
-            {/* Application Conversion by Partner */}
+          {/* Revenue vs Spend */}
+          {partnerAgg.filter(p => p.revenue > 0).length > 0 && (
             <div className="glass-card-static p-6">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                 <CreditCard size={20} className="text-blue-400" />
                 Revenue per Partner
               </h2>
-              <div className="h-[300px]">
+              <div style={{ width: '100%', height: 300 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={partnerAgg.filter(p => p.revenue > 0)}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                     <XAxis dataKey="partner" tick={{ fill: '#aaa', fontSize: 11 }} />
-                    <YAxis tick={{ fill: '#666', fontSize: 11 }} tickFormatter={(v: number) => formatCurrency(v)} />
-                    <Tooltip content={<CustomTooltip />} />
+                    <YAxis tick={{ fill: '#666', fontSize: 11 }} tickFormatter={(v: number) => fmtCurrency(v)} />
+                    <Tooltip content={<ChartTooltip />} />
                     <Bar dataKey="revenue" name="Revenue" radius={[4, 4, 0, 0]}>
                       {partnerAgg.filter(p => p.revenue > 0).map((p, i) => (
                         <Cell key={p.partner} fill={PARTNER_COLORS[p.partner] || FALLBACK_COLORS[i]} />
@@ -460,9 +378,9 @@ export default function RevenuePage() {
                 </ResponsiveContainer>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
