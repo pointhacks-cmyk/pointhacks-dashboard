@@ -395,81 +395,63 @@ const tools: any[] = [
 ]
 
 // ─── Paginated server-side data fetching ────────────────────────
-async function fetchAllServerRows(table: string): Promise<any[]> {
-  const PAGE_SIZE = 1000
-  let allData: any[] = []
-  let offset = 0
-  while (true) {
-    const { data, error } = await supabase
-      .from(table)
-      .select('*')
-      .range(offset, offset + PAGE_SIZE - 1)
-    if (error || !data || data.length === 0) break
-    allData = allData.concat(data)
-    if (data.length < PAGE_SIZE) break
-    offset += PAGE_SIZE
-  }
-  return allData
+// Use Supabase RPCs for fast aggregated data instead of fetching all rows
+// These RPCs exist: gsc_query_summary, gsc_page_summary, gsc_kpis, gsc_page_kpis, gsc_ctr_by_position
+// For chat, speed > completeness. Use RPCs (pre-aggregated, fast) rather than fetching 140K+ rows.
+async function fetchQueriesLight(opts?: { search?: string; sortBy?: string; sortOrder?: string; limit?: number }): Promise<any[]> {
+  let query = supabase.from('gsc_queries').select('query, clicks, impressions, ctr, position')
+  if (opts?.search) query = query.ilike('query', `%${opts.search}%`)
+  const sortCol = opts?.sortBy || 'clicks'
+  query = query.order(sortCol, { ascending: opts?.sortOrder === 'asc' })
+  query = query.limit(opts?.limit || 100)
+  const { data } = await query
+  return (data || []).map((r: any) => ({ query: r.query, clicks: r.clicks, impressions: r.impressions, avg_ctr: r.ctr, avg_position: r.position }))
 }
 
-function aggregateServerRows(raw: any[], groupKey: string) {
-  const deduped = new Map<string, any>()
-  for (const r of raw) {
-    const key = `${r[groupKey]}|${r.date}`
-    if (!deduped.has(key)) deduped.set(key, r)
-  }
-  const map = new Map<string, { clicks: number; impressions: number; ctr_sum: number; pos_sum: number; count: number }>()
-  for (const r of deduped.values()) {
-    const key = r[groupKey]
-    const ex = map.get(key)
-    if (ex) {
-      ex.clicks += r.clicks || 0; ex.impressions += r.impressions || 0
-      ex.ctr_sum += r.ctr || 0; ex.pos_sum += r.position || 0; ex.count++
-    } else {
-      map.set(key, { clicks: r.clicks || 0, impressions: r.impressions || 0, ctr_sum: r.ctr || 0, pos_sum: r.position || 0, count: 1 })
-    }
-  }
-  return Array.from(map.entries()).map(([k, v]) => ({
-    [groupKey]: k,
-    query: groupKey === 'query' ? k : undefined,
-    page: groupKey === 'page' ? k : undefined,
-    clicks: v.clicks,
-    impressions: v.impressions,
-    avg_ctr: v.count > 0 ? v.ctr_sum / v.count : 0,
-    avg_position: v.count > 0 ? v.pos_sum / v.count : 0,
-  })).sort((a, b) => b.clicks - a.clicks)
+async function fetchPagesLight(opts?: { search?: string; sortBy?: string; sortOrder?: string; limit?: number }): Promise<any[]> {
+  let query = supabase.from('gsc_pages').select('page, clicks, impressions, ctr, position')
+  if (opts?.search) query = query.ilike('page', `%${opts.search}%`)
+  const sortCol = opts?.sortBy || 'clicks'
+  query = query.order(sortCol, { ascending: opts?.sortOrder === 'asc' })
+  query = query.limit(opts?.limit || 100)
+  const { data } = await query
+  return (data || []).map((r: any) => ({ page: r.page, clicks: r.clicks, impressions: r.impressions, avg_ctr: r.ctr, avg_position: r.position }))
 }
 
 // ─── Tool execution ─────────────────────────────────────────────
 async function executeTool(name: string, input: any): Promise<string> {
   try {
-    const fetchQueries = async () => aggregateServerRows(await fetchAllServerRows('gsc_queries'), 'query')
-    const fetchPages = async () => aggregateServerRows(await fetchAllServerRows('gsc_pages'), 'page')
+    const fetchQueries = async () => fetchQueriesLight()
+    const fetchPages = async () => fetchPagesLight()
 
     switch (name) {
 
       case 'query_gsc_keywords': {
-        let results = await fetchQueries()
-        if (input.search) results = results.filter((q: any) => q.query.toLowerCase().includes(input.search.toLowerCase()))
-        if (input.min_clicks) results = results.filter((q: any) => q.clicks >= input.min_clicks)
-        if (input.min_impressions) results = results.filter((q: any) => q.impressions >= input.min_impressions)
-        if (input.min_position) results = results.filter((q: any) => q.avg_position >= input.min_position)
-        if (input.max_position) results = results.filter((q: any) => q.avg_position <= input.max_position)
-        const sortBy = input.sort_by || 'clicks', desc = (input.sort_order || 'desc') === 'desc'
-        results.sort((a: any, b: any) => desc ? b[sortBy] - a[sortBy] : a[sortBy] - b[sortBy])
-        return JSON.stringify({ total: results.length, results: results.slice(0, input.limit || 25).map((q: any) => ({ query: q.query, clicks: q.clicks, impressions: q.impressions, avg_position: +q.avg_position.toFixed(1), ctr_pct: +(q.avg_ctr * 100).toFixed(2) })) })
+        let q = supabase.from('gsc_queries').select('query, clicks, impressions, ctr, position')
+        if (input.search) q = q.ilike('query', `%${input.search}%`)
+        if (input.min_clicks) q = q.gte('clicks', input.min_clicks)
+        if (input.min_impressions) q = q.gte('impressions', input.min_impressions)
+        if (input.min_position) q = q.gte('position', input.min_position)
+        if (input.max_position) q = q.lte('position', input.max_position)
+        const sortBy = input.sort_by || 'clicks'
+        q = q.order(sortBy, { ascending: (input.sort_order || 'desc') === 'asc' })
+        q = q.limit(input.limit || 25)
+        const { data } = await q
+        return JSON.stringify({ total: data?.length || 0, results: (data || []).map((r: any) => ({ query: r.query, clicks: r.clicks, impressions: r.impressions, avg_position: +r.position.toFixed(1), ctr_pct: +(r.ctr * 100).toFixed(2) })) })
       }
 
       case 'query_gsc_pages': {
-        let results = await fetchPages()
-        if (input.search) results = results.filter((p: any) => p.page.toLowerCase().includes(input.search.toLowerCase()))
-        if (input.min_clicks) results = results.filter((p: any) => p.clicks >= input.min_clicks)
-        if (input.min_impressions) results = results.filter((p: any) => p.impressions >= input.min_impressions)
-        if (input.min_position) results = results.filter((p: any) => p.avg_position >= input.min_position)
-        if (input.max_position) results = results.filter((p: any) => p.avg_position <= input.max_position)
-        const sortBy = input.sort_by || 'clicks', desc = (input.sort_order || 'desc') === 'desc'
-        results.sort((a: any, b: any) => desc ? b[sortBy] - a[sortBy] : a[sortBy] - b[sortBy])
-        return JSON.stringify({ total: results.length, results: results.slice(0, input.limit || 25).map((p: any) => ({ page: p.page.replace('https://www.pointhacks.com.au', ''), clicks: p.clicks, impressions: p.impressions, avg_position: +p.avg_position.toFixed(1), ctr_pct: +(p.avg_ctr * 100).toFixed(2) })) })
+        let q = supabase.from('gsc_pages').select('page, clicks, impressions, ctr, position')
+        if (input.search) q = q.ilike('page', `%${input.search}%`)
+        if (input.min_clicks) q = q.gte('clicks', input.min_clicks)
+        if (input.min_impressions) q = q.gte('impressions', input.min_impressions)
+        if (input.min_position) q = q.gte('position', input.min_position)
+        if (input.max_position) q = q.lte('position', input.max_position)
+        const sortBy = input.sort_by || 'clicks'
+        q = q.order(sortBy, { ascending: (input.sort_order || 'desc') === 'asc' })
+        q = q.limit(input.limit || 25)
+        const { data } = await q
+        return JSON.stringify({ total: data?.length || 0, results: (data || []).map((r: any) => ({ page: r.page.replace('https://www.pointhacks.com.au', ''), clicks: r.clicks, impressions: r.impressions, avg_position: +r.position.toFixed(1), ctr_pct: +(r.ctr * 100).toFixed(2) })) })
       }
 
       case 'get_gsc_kpis': {
@@ -1388,7 +1370,7 @@ export async function POST(req: NextRequest) {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-opus-4-20250514', max_tokens: 4096, system: systemPrompt, tools, messages }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 4096, system: systemPrompt, tools, messages }),
       })
 
       if (!response.ok) {
@@ -1418,7 +1400,7 @@ export async function POST(req: NextRequest) {
       const streamResponse = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-opus-4-20250514', max_tokens: 4096, system: systemPrompt, tools, messages, stream: true }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 4096, system: systemPrompt, tools, messages, stream: true }),
       })
 
       if (!streamResponse.ok || !streamResponse.body) {
