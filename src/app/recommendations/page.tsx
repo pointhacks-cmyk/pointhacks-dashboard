@@ -42,7 +42,7 @@ const BUCKETS: BucketDef[] = [
   { key: 'visibility', name: 'Losing Search Visibility', icon: Eye, description: 'Pages with declining impressions' },
   { key: 'ranking', name: 'Rankings Dropping', icon: TrendingDown, description: 'Pages losing position in search' },
   { key: 'ctr', name: 'Seen But Not Clicked', icon: MousePointerClick, description: 'High impressions but CTR declining' },
-  { key: 'engagement', name: 'Landing But Not Converting', icon: Users, description: 'Bounce rate increasing, engagement dropping' },
+  { key: 'engagement', name: 'Landing But Not Converting', icon: Users, description: 'Bounce rate up or click-out rate declining on pages with stable traffic' },
   { key: 'conversion', name: 'Click-Outs Declining', icon: DollarSign, description: 'Affiliate click-outs going down', gold: true },
 ]
 
@@ -206,20 +206,36 @@ export default function RecommendationsPage() {
           })
         }
 
-        // Bucket 4: Engagement (bounce rate increasing)
+        // Bucket 4: Engagement — pages where traffic is stable but engagement/click-outs dropping
+        // This catches pages where people land but don't convert (bounce up, time down, or click-outs down while traffic stable)
         for (const [path, cur] of curGa4Map) {
           const prev = prevGa4Map.get(path)
           if (!prev || prev.sessions < 10) continue
           const curBounce = cur.bounce_sum / Math.max(1, cur.count)
           const prevBounce = prev.bounce_sum / Math.max(1, prev.count)
           const bounceChange = prevBounce > 0 ? ((curBounce - prevBounce) / prevBounce) * 100 : 0
-          if (bounceChange < 10) continue // bounce must have increased 10%+
+          const sessionChange = prev.sessions > 0 ? ((cur.sessions - prev.sessions) / prev.sessions) * 100 : 0
+          const clickoutChange = prev.clicks > 0 ? ((cur.clicks - prev.clicks) / prev.clicks) * 100 : 0
           const w = getWeight('https://www.pointhacks.com.au' + path)
+
+          // Flag if: bounce increased 10%+ OR (traffic stable/growing but click-outs dropped 15%+)
+          const bounceProblem = bounceChange >= 10
+          const clickoutProblem = prev.clicks > 2 && sessionChange > -10 && clickoutChange < -15
+          if (!bounceProblem && !clickoutProblem) continue
+
+          // Choose the worse metric as the primary
+          const primaryIsClickout = clickoutProblem && (!bounceProblem || Math.abs(clickoutChange) > bounceChange)
           issues.engagement.push({
-            page: path, primaryMetric: 'Bounce Rate', current: curBounce, previous: prevBounce,
-            changePct: bounceChange, severity: getSeverity(bounceChange, w), weight: w, impact: bounceChange * w * cur.sessions / 10,
-            currentMetrics: { sessions: cur.sessions, bounce_rate: curBounce, avg_time: cur.time_sum / Math.max(1, cur.count), affiliate_clicks: cur.clicks },
-            previousMetrics: { sessions: prev.sessions, bounce_rate: prevBounce, avg_time: prev.time_sum / Math.max(1, prev.count), affiliate_clicks: prev.clicks },
+            page: path,
+            primaryMetric: primaryIsClickout ? 'Click-Out Rate' : 'Bounce Rate',
+            current: primaryIsClickout ? cur.clicks : curBounce,
+            previous: primaryIsClickout ? prev.clicks : prevBounce,
+            changePct: primaryIsClickout ? clickoutChange : bounceChange,
+            severity: getSeverity(primaryIsClickout ? clickoutChange : bounceChange, w),
+            weight: w,
+            impact: (primaryIsClickout ? Math.abs(clickoutChange) * prev.clicks * 10 : bounceChange * cur.sessions / 10) * w,
+            currentMetrics: { sessions: cur.sessions, bounce_rate: curBounce, avg_time: cur.time_sum / Math.max(1, cur.count), affiliate_clicks: cur.clicks, clickout_rate: cur.sessions > 0 ? (cur.clicks / cur.sessions) * 100 : 0 },
+            previousMetrics: { sessions: prev.sessions, bounce_rate: prevBounce, avg_time: prev.time_sum / Math.max(1, prev.count), affiliate_clicks: prev.clicks, clickout_rate: prev.sessions > 0 ? (prev.clicks / prev.sessions) * 100 : 0 },
           })
         }
 

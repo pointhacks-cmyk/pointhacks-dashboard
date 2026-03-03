@@ -392,88 +392,93 @@ const tools: any[] = [
     description: 'Comprehensive site audit combining health score, top issues, quick wins, traffic trends, position distribution, CTR benchmarks, and strategic recommendations. Use for "audit my site" or "full analysis" requests.',
     input_schema: { ...obj, properties: {} },
   },
+  {
+    name: 'get_clickout_data',
+    description: 'Get click-out (affiliate click) revenue data by page. Shows which pages drive the most bank application clicks — the north star metric for Point Hacks.',
+    input_schema: { ...obj, properties: { limit: num } },
+  },
+  {
+    name: 'get_page_analysis',
+    description: 'Get full cross-referenced GSC + GA4 analysis for a specific page or URL path. Shows clicks, impressions, position, sessions, bounce rate, and click-outs all in one.',
+    input_schema: { ...obj, properties: { page: str }, required: ['page'] },
+  },
+  {
+    name: 'get_daily_trend',
+    description: 'Get daily trend of clicks, impressions, and average position for all pages or filtered to a specific page/folder path.',
+    input_schema: { ...obj, properties: { page: str, days: num } },
+  },
+  {
+    name: 'compare_pages_periods',
+    description: 'Compare page performance between current and previous period. Shows which pages improved or declined in clicks, impressions, position, and CTR.',
+    input_schema: { ...obj, properties: { search: str, limit: num } },
+  },
 ]
 
 // ─── Paginated server-side data fetching ────────────────────────
-// Use Supabase RPCs for fast aggregated data instead of fetching all rows
-// These RPCs exist: gsc_query_summary, gsc_page_summary, gsc_kpis, gsc_page_kpis, gsc_ctr_by_position
-// For chat, speed > completeness. Use RPCs (pre-aggregated, fast) rather than fetching 140K+ rows.
-async function fetchQueriesLight(opts?: { search?: string; sortBy?: string; sortOrder?: string; limit?: number }): Promise<any[]> {
-  let query = supabase.from('gsc_queries').select('query, clicks, impressions, ctr, position')
-  if (opts?.search) query = query.ilike('query', `%${opts.search}%`)
-  const sortCol = opts?.sortBy || 'clicks'
-  query = query.order(sortCol, { ascending: opts?.sortOrder === 'asc' })
-  query = query.limit(opts?.limit || 100)
-  const { data } = await query
-  return (data || []).map((r: any) => ({ query: r.query, clicks: r.clicks, impressions: r.impressions, avg_ctr: r.ctr, avg_position: r.position }))
-}
-
-async function fetchPagesLight(opts?: { search?: string; sortBy?: string; sortOrder?: string; limit?: number }): Promise<any[]> {
-  let query = supabase.from('gsc_pages').select('page, clicks, impressions, ctr, position')
-  if (opts?.search) query = query.ilike('page', `%${opts.search}%`)
-  const sortCol = opts?.sortBy || 'clicks'
-  query = query.order(sortCol, { ascending: opts?.sortOrder === 'asc' })
-  query = query.limit(opts?.limit || 100)
-  const { data } = await query
-  return (data || []).map((r: any) => ({ page: r.page, clicks: r.clicks, impressions: r.impressions, avg_ctr: r.ctr, avg_position: r.position }))
-}
-
 // ─── Tool execution ─────────────────────────────────────────────
+// All heavy aggregation is done in Postgres via RPCs (milliseconds, not minutes)
 async function executeTool(name: string, input: any): Promise<string> {
   try {
-    const fetchQueries = async () => fetchQueriesLight()
-    const fetchPages = async () => fetchPagesLight()
+    // Default date ranges
+    const now = new Date()
+    const end = now.toISOString().slice(0, 10)
+    const start28 = new Date(now.getTime() - 28 * 86400000).toISOString().slice(0, 10)
+    const start7 = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10)
+    const prev28Start = new Date(now.getTime() - 56 * 86400000).toISOString().slice(0, 10)
+
+    // Helper: fetch aggregated queries/pages via RPC
+    const fetchQueries = async (lim = 100) => {
+      const { data } = await supabase.rpc('gsc_queries_agg', { start_date: start28, end_date: end, search_text: null, sort_col: 'clicks', sort_dir: 'desc', lim })
+      return (data || []).map((r: any) => ({ query: r.query, clicks: parseInt(r.clicks), impressions: parseInt(r.impressions), avg_ctr: parseFloat(r.avg_ctr), avg_position: parseFloat(r.avg_position) }))
+    }
+    const fetchPages = async (lim = 100) => {
+      const { data } = await supabase.rpc('gsc_pages_agg', { start_date: start28, end_date: end, search_text: null, sort_col: 'clicks', sort_dir: 'desc', lim })
+      return (data || []).map((r: any) => ({ page: r.page, clicks: parseInt(r.clicks), impressions: parseInt(r.impressions), avg_ctr: parseFloat(r.avg_ctr), avg_position: parseFloat(r.avg_position) }))
+    }
 
     switch (name) {
 
       case 'query_gsc_keywords': {
-        let q = supabase.from('gsc_queries').select('query, clicks, impressions, ctr, position')
-        if (input.search) q = q.ilike('query', `%${input.search}%`)
-        if (input.min_clicks) q = q.gte('clicks', input.min_clicks)
-        if (input.min_impressions) q = q.gte('impressions', input.min_impressions)
-        if (input.min_position) q = q.gte('position', input.min_position)
-        if (input.max_position) q = q.lte('position', input.max_position)
-        const sortBy = input.sort_by || 'clicks'
-        q = q.order(sortBy, { ascending: (input.sort_order || 'desc') === 'asc' })
-        q = q.limit(input.limit || 25)
-        const { data } = await q
-        return JSON.stringify({ total: data?.length || 0, results: (data || []).map((r: any) => ({ query: r.query, clicks: r.clicks, impressions: r.impressions, avg_position: +r.position.toFixed(1), ctr_pct: +(r.ctr * 100).toFixed(2) })) })
+        const { data } = await supabase.rpc('gsc_queries_agg', {
+          start_date: start28, end_date: end,
+          search_text: input.search || null,
+          sort_col: input.sort_by || 'clicks',
+          sort_dir: input.sort_order || 'desc',
+          lim: input.limit || 25
+        })
+        let results = data || []
+        if (input.min_clicks) results = results.filter((r: any) => parseInt(r.clicks) >= input.min_clicks)
+        if (input.min_impressions) results = results.filter((r: any) => parseInt(r.impressions) >= input.min_impressions)
+        if (input.min_position) results = results.filter((r: any) => parseFloat(r.avg_position) >= input.min_position)
+        if (input.max_position) results = results.filter((r: any) => parseFloat(r.avg_position) <= input.max_position)
+        return JSON.stringify({ total: results.length, results: results.map((r: any) => ({ query: r.query, clicks: r.clicks, impressions: r.impressions, avg_position: parseFloat(r.avg_position), ctr_pct: parseFloat(r.avg_ctr) })) })
       }
 
       case 'query_gsc_pages': {
-        let q = supabase.from('gsc_pages').select('page, clicks, impressions, ctr, position')
-        if (input.search) q = q.ilike('page', `%${input.search}%`)
-        if (input.min_clicks) q = q.gte('clicks', input.min_clicks)
-        if (input.min_impressions) q = q.gte('impressions', input.min_impressions)
-        if (input.min_position) q = q.gte('position', input.min_position)
-        if (input.max_position) q = q.lte('position', input.max_position)
-        const sortBy = input.sort_by || 'clicks'
-        q = q.order(sortBy, { ascending: (input.sort_order || 'desc') === 'asc' })
-        q = q.limit(input.limit || 25)
-        const { data } = await q
-        return JSON.stringify({ total: data?.length || 0, results: (data || []).map((r: any) => ({ page: r.page.replace('https://www.pointhacks.com.au', ''), clicks: r.clicks, impressions: r.impressions, avg_position: +r.position.toFixed(1), ctr_pct: +(r.ctr * 100).toFixed(2) })) })
+        const { data } = await supabase.rpc('gsc_pages_agg', {
+          start_date: start28, end_date: end,
+          search_text: input.search || null,
+          sort_col: input.sort_by || 'clicks',
+          sort_dir: input.sort_order || 'desc',
+          lim: input.limit || 25
+        })
+        let results = data || []
+        if (input.min_clicks) results = results.filter((r: any) => parseInt(r.clicks) >= input.min_clicks)
+        if (input.min_impressions) results = results.filter((r: any) => parseInt(r.impressions) >= input.min_impressions)
+        if (input.min_position) results = results.filter((r: any) => parseFloat(r.avg_position) >= input.min_position)
+        if (input.max_position) results = results.filter((r: any) => parseFloat(r.avg_position) <= input.max_position)
+        return JSON.stringify({ total: results.length, results: results.map((r: any) => ({ page: r.page.replace('https://www.pointhacks.com.au', ''), clicks: r.clicks, impressions: r.impressions, avg_position: parseFloat(r.avg_position), ctr_pct: parseFloat(r.avg_ctr) })) })
       }
 
       case 'get_gsc_kpis': {
-        const queries = await fetchQueries()
-        const pages = await fetchPages()
-        const qKpis = {
-          total_clicks: queries.reduce((s: number, q: any) => s + q.clicks, 0),
-          total_impressions: queries.reduce((s: number, q: any) => s + q.impressions, 0),
-          unique_queries: queries.length,
-          avg_ctr: queries.length > 0 ? queries.reduce((s: number, q: any) => s + q.avg_ctr, 0) / queries.length : 0,
-          avg_position: queries.length > 0 ? queries.reduce((s: number, q: any) => s + q.avg_position, 0) / queries.length : 0,
-          top3_count: queries.filter((q: any) => q.avg_position <= 3).length,
-          top10_count: queries.filter((q: any) => q.avg_position <= 10).length,
-        }
-        const pKpis = {
-          total_clicks: pages.reduce((s: number, p: any) => s + p.clicks, 0),
-          total_impressions: pages.reduce((s: number, p: any) => s + p.impressions, 0),
-          unique_pages: pages.length,
-          avg_ctr: pages.length > 0 ? pages.reduce((s: number, p: any) => s + p.avg_ctr, 0) / pages.length : 0,
-          avg_position: pages.length > 0 ? pages.reduce((s: number, p: any) => s + p.avg_position, 0) / pages.length : 0,
-        }
-        return JSON.stringify({ query_level: qKpis, page_level: pKpis })
+        const [kpisRes, clickoutsRes] = await Promise.all([
+          supabase.rpc('gsc_kpis_range', { start_date: start28, end_date: end }),
+          supabase.rpc('ga4_clickouts', { start_date: start28, end_date: end, lim: 5 }),
+        ])
+        const kpis = kpisRes.data?.[0] || {}
+        const topClickouts = clickoutsRes.data || []
+        const totalClickouts = topClickouts.reduce((s: number, r: any) => s + parseInt(r.click_outs || 0), 0)
+        return JSON.stringify({ ...kpis, total_click_outs: totalClickouts, top_clickout_pages: topClickouts })
       }
 
       case 'get_ctr_by_position': {
@@ -1315,6 +1320,31 @@ async function executeTool(name: string, input: any): Promise<string> {
           top_5_pages: pages.sort((a,b) => b.clicks-a.clicks).slice(0,5).map(p => ({ page: p.page.replace('https://www.pointhacks.com.au',''), clicks: p.clicks })),
           tracked_keywords: seo.length,
         })
+      }
+
+      case 'get_clickout_data': {
+        const { data } = await supabase.rpc('ga4_clickouts', { start_date: start28, end_date: end, lim: input.limit || 20 })
+        return JSON.stringify({ click_out_pages: data, note: 'click_outs = clicked_card_application_link events (bank application clicks)' })
+      }
+
+      case 'get_page_analysis': {
+        const { data } = await supabase.rpc('page_full_analysis', { start_date: start28, end_date: end, page_search: input.page })
+        return JSON.stringify({ page: input.page, metrics: data })
+      }
+
+      case 'get_daily_trend': {
+        const days = input.days || 28
+        const trendStart = new Date(now.getTime() - days * 86400000).toISOString().slice(0, 10)
+        const { data } = await supabase.rpc('gsc_daily_trend', { start_date: trendStart, end_date: end, page_search: input.page || null })
+        return JSON.stringify({ trend: data })
+      }
+
+      case 'compare_pages_periods': {
+        const { data } = await supabase.rpc('gsc_pages_comparison', {
+          start1: start28, end1: end, start2: prev28Start, end2: start28,
+          search_text: input.search || null, lim: input.limit || 30
+        })
+        return JSON.stringify({ comparison: data })
       }
 
       default:
