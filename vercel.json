@@ -8,6 +8,9 @@
     },
     "src/app/api/alert-action/route.ts": {
       "maxDuration": 30
+    },
+    "src/app/api/page-inspect/route.ts": {
+      "maxDuration": 120
     }
   }
 }

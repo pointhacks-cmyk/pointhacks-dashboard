@@ -17,6 +17,7 @@ import {
   ChevronUp,
   TrendingUp,
   Newspaper,
+  FileSearch,
 } from 'lucide-react'
 
 const navSections = [
@@ -30,6 +31,7 @@ const navSections = [
       { name: 'Audience', href: '/audience', icon: Users },
       { name: 'Trends', href: '/trends', icon: TrendingUp },
       { name: 'News Scanner', href: '/news', icon: Newspaper },
+      { name: 'Page Inspect', href: '/page-inspect', icon: FileSearch },
     ],
   },
   {
