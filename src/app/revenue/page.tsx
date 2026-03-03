@@ -34,15 +34,15 @@ interface AggPartner {
 
 const PARTNER_COLORS: Record<string, string> = {
   'American Express': '#006FCF',
-  'ANZ': '#003DA5',
-  'NAB': '#C8102E',
-  'Westpac': '#D5002B',
+  'ANZ': '#004B8D',
+  'NAB': '#D4A843',
+  'Westpac': '#DA1710',
   'Qantas': '#E0001A',
-  'Citi': '#003B70',
+  'Citi': '#1A8FCE',
   'HSBC': '#DB0011',
 }
 const FALLBACK_COLORS = ['#5FD6BF', '#7B4397', '#ffc107', '#4ade80', '#f472b6', '#60a5fa', '#fb923c']
-const PIE_COLORS = ['#006FCF', '#003DA5', '#C8102E', '#D5002B', '#E0001A', '#003B70', '#DB0011']
+const PIE_COLORS = ['#006FCF', '#004B8D', '#D4A843', '#DA1710', '#E0001A', '#1A8FCE', '#DB0011']
 
 type RangeKey = '7d' | '30d' | '90d' | '12m' | 'all'
 type BrandKey = 'all' | 'Point Hacks' | 'Australian Frequent Flyer'
@@ -100,6 +100,7 @@ export default function RevenuePage() {
     async function load() {
       setLoading(true)
       const start = rangeStart(range)
+      const today = new Date().toISOString().slice(0, 10)
       const allRows: PartnerRow[] = []
       let from = 0
       while (true) {
@@ -107,6 +108,7 @@ export default function RevenuePage() {
           .from('partner_performance')
           .select('date, brand, partner, bank_clicks, credit_card_applications, revenue, marketing_expenses, gross_profit')
           .gte('date', start)
+          .lte('date', today)
           .order('date', { ascending: true })
           .range(from, from + 999)
         if (brand !== 'all') q = q.eq('brand', brand)
