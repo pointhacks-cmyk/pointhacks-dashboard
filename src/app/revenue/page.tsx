@@ -358,8 +358,6 @@ export default function RevenuePage() {
                         outerRadius={90}
                         paddingAngle={2}
                         dataKey="value"
-                        label={({ name, percent }: any) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
-                        labelLine={false}
                       >
                         {pieData.map((_, i) => (
                           <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
@@ -368,6 +366,15 @@ export default function RevenuePage() {
                       <Tooltip formatter={(v: any) => formatCurrency(Number(v))} />
                     </PieChart>
                   </ResponsiveContainer>
+                </div>
+                <div className="space-y-1.5 mt-2">
+                  {pieData.map((p, i) => (
+                    <div key={p.name} className="flex items-center gap-2 text-xs">
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                      <span className="text-zinc-300 flex-1">{p.name}</span>
+                      <span className="text-zinc-500">{formatCurrency(p.value)}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -438,17 +445,17 @@ export default function RevenuePage() {
               </h2>
               <div className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={partnerAgg.filter(p => p.revenue > 0)} layout="vertical">
+                  <BarChart data={partnerAgg.filter(p => p.revenue > 0)}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                    <XAxis type="number" tick={{ fill: '#666', fontSize: 11 }} tickFormatter={v => formatCurrency(v)} />
-                    <YAxis type="category" dataKey="partner" tick={{ fill: '#aaa', fontSize: 12 }} width={120} />
-                    <Tooltip formatter={(v: any) => formatCurrency(Number(v))} contentStyle={{ background: '#2A2A2A', border: '1px solid #383838', borderRadius: 8 }} />
-                    <Bar dataKey="revenue" name="Revenue" radius={[0, 4, 4, 0]}>
+                    <XAxis dataKey="partner" tick={{ fill: '#aaa', fontSize: 11 }} />
+                    <YAxis tick={{ fill: '#666', fontSize: 11 }} tickFormatter={(v: number) => formatCurrency(v)} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Bar dataKey="revenue" name="Revenue" radius={[4, 4, 0, 0]}>
                       {partnerAgg.filter(p => p.revenue > 0).map((p, i) => (
                         <Cell key={p.partner} fill={PARTNER_COLORS[p.partner] || FALLBACK_COLORS[i]} />
                       ))}
                     </Bar>
-                    <Bar dataKey="marketing_expenses" name="Marketing Spend" fill="#ef4444" radius={[0, 4, 4, 0]} fillOpacity={0.5} />
+                    <Bar dataKey="marketing_expenses" name="Marketing Spend" fill="#ef4444" radius={[4, 4, 0, 0]} fillOpacity={0.5} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
