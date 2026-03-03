@@ -7,11 +7,12 @@ import { fetchAllRows, aggregateRows } from '@/lib/dataHelpers'
 import {
   MousePointerClick, Eye, Target, Search, TrendingUp, TrendingDown,
   Globe, FileText, BarChart3, PieChart as PieIcon, Lightbulb, Layers,
-  ArrowUpRight, ArrowDownRight, Minus
+  ArrowUpRight, ArrowDownRight, Minus, Loader2
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, BarChart, Bar, CartesianGrid, Legend
+  PieChart, Pie, Cell, BarChart, Bar, CartesianGrid, Legend,
+  LineChart, Line
 } from 'recharts'
 
 const NAVY = '#6366f1', TEAL = '#34D399', RED = '#EF4444', GOLD = '#F59E0B', PURPLE = '#8B5CF6'
@@ -57,6 +58,8 @@ export default function OverviewPage() {
   const [ctrByPos, setCtrByPos] = useState<CTRByPos[]>([])
   const [pageKpis, setPageKpis] = useState<PageKPI[]>([])
   const [loading, setLoading] = useState(true)
+  const [trendsData, setTrendsData] = useState<{ keywords: string[]; timeline: any[]; risingRelated: any[]; topRelated: any[] } | null>(null)
+  const [trendsLoading, setTrendsLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
@@ -135,6 +138,19 @@ export default function OverviewPage() {
     }
     load()
   }, [startDate, endDate])
+
+  // Fetch Google Trends
+  useEffect(() => {
+    async function loadTrends() {
+      try {
+        const res = await fetch('/api/trends')
+        const json = await res.json()
+        if (!json.error) setTrendsData(json)
+      } catch {}
+      setTrendsLoading(false)
+    }
+    loadTrends()
+  }, [])
 
   // Derived data
   const k = kpis || { total_clicks: 0, total_impressions: 0, avg_ctr: 0, avg_position: 0, unique_queries: 0, top3_count: 0, top10_count: 0 }
@@ -462,8 +478,76 @@ export default function OverviewPage() {
         </div>
       )}
 
-      <div className="text-center text-xs text-secondary animate-in" style={{ animationDelay: '610ms', animationFillMode: 'both' }}>
-        Data: Google Search Console + GA4 · Last synced: {new Date().toLocaleDateString('en-AU')}
+      {/* 8. Search Trends */}
+      <div className="animate-in" style={{ animationDelay: '610ms', animationFillMode: 'both' }}>
+        <h2 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+          <TrendingUp size={16} style={{ color: TEAL }} /> Search Trends
+        </h2>
+        <div className="glass-card-static p-6">
+          {trendsLoading ? (
+            <div className="flex items-center justify-center" style={{ height: 240 }}>
+              <Loader2 size={20} className="animate-spin" style={{ color: TEAL }} />
+            </div>
+          ) : trendsData && trendsData.timeline.length > 0 ? (
+            <>
+              <p className="text-xs text-secondary mb-4">Google Trends interest (AU) — last 90 days</p>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={trendsData.timeline.map(t => {
+                  const row: any = { date: t.date }
+                  trendsData.keywords.forEach((kw: string, i: number) => { row[kw] = t.values[i] })
+                  return row
+                })} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333333" />
+                  <XAxis dataKey="date" tick={{ fill: '#8C8C8C', fontSize: 10 }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                  <YAxis tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 10, color: '#8C8C8C' }} />
+                  {trendsData.keywords.map((kw: string, i: number) => (
+                    <Line key={kw} type="monotone" dataKey={kw} stroke={CHART_COLORS[i]} strokeWidth={2} dot={false} />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+              {trendsData.risingRelated.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-xs text-secondary uppercase tracking-wider font-medium mb-2">Rising Queries</div>
+                  <div className="flex flex-wrap gap-2">
+                    {trendsData.risingRelated.slice(0, 8).map((q: any, i: number) => {
+                      const isBreakout = q.value === 'Breakout'
+                      return (
+                        <span key={i} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                          background: isBreakout ? '#34D39915' : '#F59E0B15',
+                          color: isBreakout ? '#34D399' : '#F59E0B',
+                          border: `1px solid ${isBreakout ? '#34D39930' : '#F59E0B30'}`,
+                        }}>
+                          {q.query}
+                          <span style={{ fontSize: 9, opacity: 0.8 }}>{isBreakout ? '🚀' : `+${q.value}`}</span>
+                        </span>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+              {trendsData.topRelated.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-xs text-secondary uppercase tracking-wider font-medium mb-2">Top Related</div>
+                  <div className="flex flex-wrap gap-x-6 gap-y-1">
+                    {trendsData.topRelated.slice(0, 6).map((q: any, i: number) => (
+                      <span key={i} className="text-xs text-secondary">{q.query} <span className="font-mono text-white">{q.value}</span></span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-secondary text-center py-8">Trends data unavailable — Google may be rate-limiting requests</p>
+          )}
+        </div>
+      </div>
+
+      <div className="text-center text-xs text-secondary animate-in" style={{ animationDelay: '670ms', animationFillMode: 'both' }}>
+        Data: Google Search Console + GA4 + Google Trends · Last synced: {new Date().toLocaleDateString('en-AU')}
       </div>
     </div>
   )
