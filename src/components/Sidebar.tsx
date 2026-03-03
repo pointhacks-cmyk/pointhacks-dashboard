@@ -18,6 +18,7 @@ import {
   TrendingUp,
   Newspaper,
   FileSearch,
+  DollarSign,
 } from 'lucide-react'
 
 const navSections = [
@@ -28,6 +29,7 @@ const navSections = [
       { name: 'Monitor', href: '/monitor', icon: Shield, emphasis: true },
       { name: 'Search & SEO', href: '/search', icon: Search },
 
+      { name: 'Revenue', href: '/revenue', icon: DollarSign },
       { name: 'Audience', href: '/audience', icon: Users },
       { name: 'Trends', href: '/trends', icon: TrendingUp },
       { name: 'News Scanner', href: '/news', icon: Newspaper },
