@@ -1,473 +1,594 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
-import { Lightbulb, Target, TrendingDown, FileText, Search, Filter, Eye, Zap, ChevronLeft, ChevronRight } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+import { useEffect, useState, useMemo, useCallback } from 'react'
+import { Eye, TrendingDown, MousePointerClick, Users, DollarSign, ChevronLeft, ChevronDown, ChevronUp, Stethoscope, GitCompare, Bookmark, X, Loader2, Send, Star } from 'lucide-react'
 import { useDateRange } from '@/lib/DateRangeContext'
 import { fetchAllRows, aggregateRows } from '@/lib/dataHelpers'
-import RecTinder, { TinderRec } from '@/components/RecTinder'
 
-type Severity = 'critical' | 'opportunity' | 'info'
-type Impact = 'high' | 'medium' | 'low'
-type Category = 'ctr' | 'quick-wins' | 'declining' | 'opportunities'
+// ─── Types ───────────────────────────────────────────────────────
+type Severity = 'critical' | 'warning' | 'minor'
+type BucketKey = 'visibility' | 'ranking' | 'ctr' | 'engagement' | 'conversion'
 
-interface Rec {
-  id: string
+interface Issue {
+  page: string
+  primaryMetric: string
+  current: number
+  previous: number
+  changePct: number
   severity: Severity
-  category: Category
-  icon: typeof Search
-  title: string
-  body: string
-  impact: Impact
-  impactScore: number
-  item: string
-  metrics: { label: string; value: string }[]
+  weight: number
+  impact: number
+  currentMetrics: Record<string, number>
+  previousMetrics: Record<string, number>
 }
 
-const TEAL = '#34D399', RED = '#EF4444', NAVY = '#6366f1', GOLD = '#F59E0B'
-
-const sevStyle: Record<Severity, { color: string; label: string }> = {
-  critical: { color: RED, label: 'CRITICAL' },
-  opportunity: { color: TEAL, label: 'OPPORTUNITY' },
-  info: { color: NAVY, label: 'INFO' },
+interface BucketDef {
+  key: BucketKey
+  name: string
+  icon: typeof Eye
+  description: string
+  gold?: boolean
 }
 
-const catLabel: Record<Category, string> = {
-  ctr: 'CTR Issue', 'quick-wins': 'Quick Win', declining: 'Declining', opportunities: 'Opportunity',
+interface WatchItem {
+  page: string
+  bucket: string
+  addedAt: string
+  metrics: { current: any; previous: any }
 }
 
-const impactColor: Record<Impact, string> = { high: RED, medium: GOLD, low: TEAL }
+// ─── Constants ───────────────────────────────────────────────────
+const BUCKETS: BucketDef[] = [
+  { key: 'visibility', name: 'Losing Search Visibility', icon: Eye, description: 'Pages with declining impressions' },
+  { key: 'ranking', name: 'Rankings Dropping', icon: TrendingDown, description: 'Pages losing position in search' },
+  { key: 'ctr', name: 'Seen But Not Clicked', icon: MousePointerClick, description: 'High impressions but CTR declining' },
+  { key: 'engagement', name: 'Landing But Not Converting', icon: Users, description: 'Bounce rate increasing, engagement dropping' },
+  { key: 'conversion', name: 'Click-Outs Declining', icon: DollarSign, description: 'Affiliate click-outs going down', gold: true },
+]
 
-function fmt(n: number) { return n.toLocaleString() }
-function shortUrl(url: string) { return url.replace('https://www.pointhacks.com.au', '') || '/' }
+const SEV_COLORS: Record<Severity, string> = { critical: '#EF4444', warning: '#F59E0B', minor: '#34D399' }
+const SEV_EMOJI: Record<Severity, string> = { critical: '🔴', warning: '🟡', minor: '🟢' }
 
+// ─── Helpers ─────────────────────────────────────────────────────
+function getWeight(url: string): number {
+  const path = url.replace(/^https?:\/\/[^/]+/, '')
+  if (path.startsWith('/credit-cards')) return 3
+  if (path.startsWith('/qantas') || path.startsWith('/velocity') || path.startsWith('/amex')) return 2
+  return 1
+}
+
+function getSeverity(changePct: number, weight: number): Severity {
+  const weighted = Math.abs(changePct) * weight
+  if (weighted >= 30) return 'critical'
+  if (weighted >= 15) return 'warning'
+  return 'minor'
+}
+
+function shortUrl(url: string) { return url.replace(/^https?:\/\/[^/]+/, '') || '/' }
+function pct(n: number) { return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%` }
+function fmt(n: number) { return Math.round(n).toLocaleString() }
+
+function getFolder(url: string): string {
+  const path = shortUrl(url)
+  const match = path.match(/^\/[^/]+\//)
+  return match ? match[0] : '/'
+}
+
+function worstSeverity(issues: Issue[]): Severity {
+  if (issues.some(i => i.severity === 'critical')) return 'critical'
+  if (issues.some(i => i.severity === 'warning')) return 'warning'
+  return 'minor'
+}
+
+function loadWatchlist(): WatchItem[] {
+  try { return JSON.parse(localStorage.getItem('ph-watchlist') || '[]') } catch { return [] }
+}
+function saveWatchlist(items: WatchItem[]) {
+  localStorage.setItem('ph-watchlist', JSON.stringify(items))
+}
+
+// ─── Component ───────────────────────────────────────────────────
 export default function RecommendationsPage() {
   const { dateRange } = useDateRange()
   const { startDate, endDate } = dateRange
-  const [recs, setRecs] = useState<Rec[]>([])
+
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<Category | 'all'>('all')
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [tinderMode, setTinderMode] = useState(false)
-  const [page, setPage] = useState(1)
-  const PAGE_SIZE = 20
+  const [bucketIssues, setBucketIssues] = useState<Record<BucketKey, Issue[]>>({ visibility: [], ranking: [], ctr: [], engagement: [], conversion: [] })
+  const [activeBucket, setActiveBucket] = useState<BucketKey | null>(null)
+  const [expandedRow, setExpandedRow] = useState<string | null>(null)
+  const [diagnosing, setDiagnosing] = useState<string | null>(null)
+  const [diagnosis, setDiagnosis] = useState<any>(null)
+  const [watchlist, setWatchlist] = useState<WatchItem[]>([])
+  const [watchlistOpen, setWatchlistOpen] = useState(false)
 
+  useEffect(() => { setWatchlist(loadWatchlist()) }, [])
+
+  const toggleWatch = useCallback((issue: Issue, bucket: BucketKey) => {
+    setWatchlist(prev => {
+      const exists = prev.some(w => w.page === issue.page && w.bucket === bucket)
+      const next = exists ? prev.filter(w => !(w.page === issue.page && w.bucket === bucket))
+        : [...prev, { page: issue.page, bucket, addedAt: new Date().toISOString(), metrics: { current: issue.currentMetrics, previous: issue.previousMetrics } }]
+      saveWatchlist(next)
+      return next
+    })
+  }, [])
+
+  // ─── Data Fetching ─────────────────────────────────────────────
   useEffect(() => {
-    async function generate() {
+    async function load() {
+      setLoading(true)
       try {
-      const results: Rec[] = []
+        const daysDiff = (new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000
+        const prevEnd = new Date(new Date(startDate).getTime() - 86400000).toISOString().slice(0, 10)
+        const prevStart = new Date(new Date(prevEnd).getTime() - daysDiff * 86400000).toISOString().slice(0, 10)
 
-      // Fetch all rows with pagination + date filtering, then aggregate
-      const [rawQueries, rawPages, kwRes] = await Promise.all([
-        fetchAllRows('gsc_queries', startDate, endDate),
-        fetchAllRows('gsc_pages', startDate, endDate),
-        supabase.from('seo_keywords').select('*').order('search_volume', { ascending: false }),
-      ])
+        const [curGsc, prevGsc, curGa4, prevGa4] = await Promise.all([
+          fetchAllRows('gsc_pages', startDate, endDate),
+          fetchAllRows('gsc_pages', prevStart, prevEnd),
+          fetchAllRows('ga4_pages', startDate, endDate),
+          fetchAllRows('ga4_pages', prevStart, prevEnd),
+        ])
 
-      const aggQ = aggregateRows<{ query: string; clicks: number; impressions: number; ctr: number; position: number }>(rawQueries, 'query')
-      const aggP = aggregateRows<{ page: string; clicks: number; impressions: number; ctr: number; position: number }>(rawPages, 'page')
+        const aggCurGsc = aggregateRows<any>(curGsc, 'page')
+        const aggPrevGsc = aggregateRows<any>(prevGsc, 'page')
+        const prevGscMap = new Map(aggPrevGsc.map((p: any) => [p.page, p]))
 
-      // Map to the field names used by the recommendation logic below
-      const queries = aggQ.map(q => ({ query: q.query, clicks: q.clicks, impressions: q.impressions, avg_ctr: q.ctr / 100, avg_position: q.position }))
-      const pages = aggP.map(p => ({ page: p.page, clicks: p.clicks, impressions: p.impressions, avg_ctr: p.ctr / 100, avg_position: p.position }))
-      const keywords: { keyword: string; position: number; search_volume: number }[] = kwRes.data || []
+        // GA4 aggregation by page_path
+        const aggGa4 = (rows: any[]) => {
+          const map = new Map<string, { sessions: number; bounce_sum: number; time_sum: number; clicks: number; count: number }>()
+          for (const r of rows) {
+            const key = r.page_path || r.page
+            const ex = map.get(key)
+            if (ex) {
+              ex.sessions += r.sessions || 0
+              ex.bounce_sum += (r.bounce_rate || 0) * (r.sessions || 1)
+              ex.time_sum += (r.avg_time_on_page || 0) * (r.sessions || 1)
+              ex.clicks += r.affiliate_clicks || 0
+              ex.count += r.sessions || 1
+            } else {
+              map.set(key, { sessions: r.sessions || 0, bounce_sum: (r.bounce_rate || 0) * (r.sessions || 1), time_sum: (r.avg_time_on_page || 0) * (r.sessions || 1), clicks: r.affiliate_clicks || 0, count: r.sessions || 1 })
+            }
+          }
+          return map
+        }
 
-      let id = 0
+        const curGa4Map = aggGa4(curGa4)
+        const prevGa4Map = aggGa4(prevGa4)
 
-      // 1. CTR Issues — queries at position 1-5 with CTR below expected
-      for (const q of queries) {
-        if (q.avg_position > 5 || q.impressions < 200) continue
-        const expected = q.avg_position <= 1.5 ? 0.28 : q.avg_position <= 3.5 ? 0.12 : 0.06
-        if (q.avg_ctr >= expected) continue
-        const actualPct = (q.avg_ctr * 100).toFixed(1)
-        const expectedPct = Math.round(expected * 100)
-        results.push({
-          id: `ctr-q-${id++}`,
-          severity: 'critical',
-          category: 'ctr',
-          icon: Search,
-          title: `Optimize title/meta for "${q.query}"`,
-          body: `Getting ${actualPct}% CTR at position #${q.avg_position.toFixed(0)} — expected ${expectedPct}%+. Title tag or meta description isn't compelling enough.`,
-          impact: 'high',
-          impactScore: q.impressions * (expected - q.avg_ctr) * 100,
-          item: q.query,
-          metrics: [
-            { label: 'Position', value: `#${q.avg_position.toFixed(1)}` },
-            { label: 'CTR', value: `${actualPct}%` },
-            { label: 'Expected', value: `${expectedPct}%+` },
-            { label: 'Impressions', value: fmt(q.impressions) },
-          ],
-        })
-      }
+        const issues: Record<BucketKey, Issue[]> = { visibility: [], ranking: [], ctr: [], engagement: [], conversion: [] }
 
-      // 2. CTR Issues — pages with high impressions but low CTR (aggregated, no dupes)
-      for (const p of pages) {
-        if (p.impressions < 5000 || p.avg_ctr >= 0.02) continue
-        const ctrPct = (p.avg_ctr * 100).toFixed(1)
-        results.push({
-          id: `ctr-p-${id++}`,
-          severity: 'critical',
-          category: 'ctr',
-          icon: FileText,
-          title: `Low CTR on ${shortUrl(p.page)}`,
-          body: `${shortUrl(p.page)} gets ${fmt(p.impressions)} impressions but only ${fmt(p.clicks)} clicks (${ctrPct}% CTR) — meta description may not be compelling.`,
-          impact: 'high',
-          impactScore: p.impressions * 2,
-          item: p.page,
-          metrics: [
-            { label: 'Impressions', value: fmt(p.impressions) },
-            { label: 'Clicks', value: fmt(p.clicks) },
-            { label: 'CTR', value: `${ctrPct}%` },
-          ],
-        })
-      }
+        // Bucket 1: Visibility (impressions drop)
+        for (const cur of aggCurGsc) {
+          const prev = prevGscMap.get(cur.page)
+          if (!prev || prev.impressions < 50) continue
+          const change = ((cur.impressions - prev.impressions) / prev.impressions) * 100
+          const w = getWeight(cur.page)
+          const threshold = w >= 3 ? -10 : -20
+          if (change > threshold) continue
+          issues.visibility.push({
+            page: cur.page, primaryMetric: 'Impressions', current: cur.impressions, previous: prev.impressions,
+            changePct: change, severity: getSeverity(change, w), weight: w, impact: Math.abs(change) * w * prev.impressions / 100,
+            currentMetrics: { clicks: cur.clicks, impressions: cur.impressions, ctr: cur.ctr, position: cur.position },
+            previousMetrics: { clicks: prev.clicks, impressions: prev.impressions, ctr: prev.ctr, position: prev.position },
+          })
+        }
 
-      // 3. Quick Wins — queries at position 4-15 with high impressions
-      for (const q of queries) {
-        if (q.avg_position < 4 || q.avg_position > 15 || q.impressions < 500) continue
-        if (results.some(r => r.item === q.query)) continue
-        results.push({
-          id: `qw-${id++}`,
-          severity: 'opportunity',
-          category: 'quick-wins',
-          icon: Target,
-          title: `Push "${q.query}" into top 3`,
-          body: `Currently #${q.avg_position.toFixed(0)} with ${fmt(q.impressions)} impressions. Small improvements could push this into top 3 for significant traffic gains.`,
-          impact: q.avg_position <= 8 ? 'high' : 'medium',
-          impactScore: q.impressions * (16 - q.avg_position),
-          item: q.query,
-          metrics: [
-            { label: 'Position', value: `#${q.avg_position.toFixed(1)}` },
-            { label: 'Impressions', value: fmt(q.impressions) },
-            { label: 'Clicks', value: fmt(q.clicks) },
-          ],
-        })
-      }
+        // Bucket 2: Rankings (position worsening)
+        for (const cur of aggCurGsc) {
+          const prev = prevGscMap.get(cur.page)
+          if (!prev || prev.impressions < 50) continue
+          const posDelta = cur.position - prev.position // positive = worse
+          const w = getWeight(cur.page)
+          if (posDelta <= 2) continue
+          const changePct = (posDelta / Math.max(1, prev.position)) * 100
+          const sev: Severity = (w >= 2 && posDelta >= 5) ? 'critical' : posDelta >= 5 ? 'warning' : getSeverity(changePct, w)
+          issues.ranking.push({
+            page: cur.page, primaryMetric: 'Position', current: cur.position, previous: prev.position,
+            changePct: posDelta, severity: sev, weight: w, impact: posDelta * w * prev.impressions / 10,
+            currentMetrics: { clicks: cur.clicks, impressions: cur.impressions, ctr: cur.ctr, position: cur.position },
+            previousMetrics: { clicks: prev.clicks, impressions: prev.impressions, ctr: prev.ctr, position: prev.position },
+          })
+        }
 
-      // 4. Declining — pages with low click-through (position > 20, had impressions)
-      for (const p of pages) {
-        if (p.avg_position < 20 || p.impressions < 1000) continue
-        results.push({
-          id: `dec-${id++}`,
-          severity: 'info',
-          category: 'declining',
-          icon: TrendingDown,
-          title: `Low visibility: ${shortUrl(p.page)}`,
-          body: `Average position #${p.avg_position.toFixed(0)} with ${fmt(p.impressions)} impressions — content may need a major refresh or better targeting.`,
-          impact: p.impressions > 5000 ? 'medium' : 'low',
-          impactScore: p.impressions,
-          item: p.page,
-          metrics: [
-            { label: 'Position', value: `#${p.avg_position.toFixed(0)}` },
-            { label: 'Impressions', value: fmt(p.impressions) },
-            { label: 'Clicks', value: fmt(p.clicks) },
-          ],
-        })
-      }
+        // Bucket 3: CTR declining while impressions stable/growing
+        for (const cur of aggCurGsc) {
+          const prev = prevGscMap.get(cur.page)
+          if (!prev || prev.impressions < 100) continue
+          if (cur.impressions < prev.impressions * 0.9) continue // impressions must be stable
+          const ctrChange = prev.ctr > 0 ? ((cur.ctr - prev.ctr) / prev.ctr) * 100 : 0
+          if (ctrChange > -15) continue
+          const w = getWeight(cur.page)
+          issues.ctr.push({
+            page: cur.page, primaryMetric: 'CTR', current: cur.ctr, previous: prev.ctr,
+            changePct: ctrChange, severity: getSeverity(ctrChange, w), weight: w, impact: Math.abs(ctrChange) * w * cur.impressions / 100,
+            currentMetrics: { clicks: cur.clicks, impressions: cur.impressions, ctr: cur.ctr, position: cur.position },
+            previousMetrics: { clicks: prev.clicks, impressions: prev.impressions, ctr: prev.ctr, position: prev.position },
+          })
+        }
 
-      // 5. Content Opportunities from seo_keywords (position > 10, high volume)
-      for (const k of keywords) {
-        if (!k.position || k.position <= 10 || !k.search_volume || k.search_volume < 1000) continue
-        results.push({
-          id: `opp-${id++}`,
-          severity: 'opportunity',
-          category: 'opportunities',
-          icon: Lightbulb,
-          title: `Content opportunity: "${k.keyword}"`,
-          body: `You rank #${k.position} for '${k.keyword}' (${fmt(k.search_volume)} monthly searches) — content creation or optimization opportunity.`,
-          impact: k.search_volume > 10000 ? 'high' : 'medium',
-          impactScore: k.search_volume * 2,
-          item: k.keyword,
-          metrics: [
-            { label: 'Position', value: `#${k.position}` },
-            { label: 'Volume', value: `${fmt(k.search_volume)}/mo` },
-          ],
-        })
-      }
+        // Bucket 4: Engagement (bounce rate increasing)
+        for (const [path, cur] of curGa4Map) {
+          const prev = prevGa4Map.get(path)
+          if (!prev || prev.sessions < 10) continue
+          const curBounce = cur.bounce_sum / Math.max(1, cur.count)
+          const prevBounce = prev.bounce_sum / Math.max(1, prev.count)
+          const bounceChange = prevBounce > 0 ? ((curBounce - prevBounce) / prevBounce) * 100 : 0
+          if (bounceChange < 10) continue // bounce must have increased 10%+
+          const w = getWeight('https://www.pointhacks.com.au' + path)
+          issues.engagement.push({
+            page: path, primaryMetric: 'Bounce Rate', current: curBounce, previous: prevBounce,
+            changePct: bounceChange, severity: getSeverity(bounceChange, w), weight: w, impact: bounceChange * w * cur.sessions / 10,
+            currentMetrics: { sessions: cur.sessions, bounce_rate: curBounce, avg_time: cur.time_sum / Math.max(1, cur.count), affiliate_clicks: cur.clicks },
+            previousMetrics: { sessions: prev.sessions, bounce_rate: prevBounce, avg_time: prev.time_sum / Math.max(1, prev.count), affiliate_clicks: prev.clicks },
+          })
+        }
 
-      // Sort by impact score
-      results.sort((a, b) => b.impactScore - a.impactScore)
-      setRecs(results)
+        // Bucket 5: Click-outs declining
+        for (const [path, cur] of curGa4Map) {
+          const prev = prevGa4Map.get(path)
+          if (!prev) continue
+          if (prev.clicks <= 0 && cur.clicks <= 0) continue // skip if both zero
+          if (prev.clicks <= 0) continue
+          const change = ((cur.clicks - prev.clicks) / prev.clicks) * 100
+          if (change > -10) continue
+          const w = getWeight('https://www.pointhacks.com.au' + path)
+          issues.conversion.push({
+            page: path, primaryMetric: 'Click-Outs', current: cur.clicks, previous: prev.clicks,
+            changePct: change, severity: getSeverity(change, w), weight: w, impact: Math.abs(change) * w * prev.clicks,
+            currentMetrics: { sessions: cur.sessions, affiliate_clicks: cur.clicks },
+            previousMetrics: { sessions: prev.sessions, affiliate_clicks: prev.clicks },
+          })
+        }
+
+        // Sort each bucket by impact
+        for (const key of Object.keys(issues) as BucketKey[]) {
+          issues[key].sort((a, b) => b.impact - a.impact)
+        }
+
+        setBucketIssues(issues)
       } catch (e) {
-        // Silently handle — shows empty state
+        console.error('Failed to load recommendations:', e)
       } finally {
         setLoading(false)
       }
     }
-    generate()
+    load()
   }, [startDate, endDate])
 
-  const filtered = useMemo(() => filter === 'all' ? recs : recs.filter(r => r.category === filter), [recs, filter])
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const paged = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page])
+  // ─── Diagnose ──────────────────────────────────────────────────
+  const handleDiagnose = async (issue: Issue, bucket: BucketKey) => {
+    setDiagnosing(issue.page)
+    setDiagnosis(null)
+    try {
+      const res = await fetch('/api/alert-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          alertId: `${bucket}-${issue.page}`,
+          alertTitle: `${bucket} issue on ${shortUrl(issue.page)}`,
+          alertType: bucket === 'ranking' ? 'position_drop' : bucket === 'visibility' ? 'traffic_drop' : bucket === 'ctr' ? 'ctr_anomaly' : bucket === 'conversion' ? 'traffic_drop' : 'traffic_drop',
+          action: 'recommended_fix',
+          query: shortUrl(issue.page),
+          page: issue.page,
+          position: issue.currentMetrics.position || 0,
+          ctr: (issue.currentMetrics.ctr || 0) / 100,
+          alertData: {
+            bucket, page: issue.page, currentMetrics: issue.currentMetrics, previousMetrics: issue.previousMetrics,
+            changePct: issue.changePct, folder: getFolder(issue.page),
+          },
+        }),
+      })
+      const data = await res.json()
+      setDiagnosis(data.result)
+    } catch {
+      setDiagnosis({ recommendation: { summary: 'Failed to get diagnosis. Please try again.', steps: [], priority: 'unknown', impact: 'unknown', rootCause: 'Error connecting to API' } })
+    }
+  }
 
-  const counts = useMemo(() => ({
-    all: recs.length,
-    ctr: recs.filter(r => r.category === 'ctr').length,
-    'quick-wins': recs.filter(r => r.category === 'quick-wins').length,
-    declining: recs.filter(r => r.category === 'declining').length,
-    opportunities: recs.filter(r => r.category === 'opportunities').length,
-  }), [recs])
+  const closeDiagnosis = () => { setDiagnosing(null); setDiagnosis(null) }
 
-  const severityCounts = useMemo(() => ({
-    critical: recs.filter(r => r.severity === 'critical').length,
-    opportunity: recs.filter(r => r.severity === 'opportunity').length,
-    info: recs.filter(r => r.severity === 'info').length,
-    highImpact: recs.filter(r => r.impact === 'high').length,
-  }), [recs])
+  const sendToChat = (text: string) => {
+    window.dispatchEvent(new CustomEvent('chat-submit', { detail: text }))
+    closeDiagnosis()
+  }
 
+  // ─── Rendering ─────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="space-y-4 max-w-5xl mx-auto px-4 py-8">
-        <div className="skeleton h-10 w-64 rounded-lg" />
+      <div className="space-y-4 max-w-6xl mx-auto px-4 py-8">
+        <div className="skeleton h-10 w-80 rounded-lg" />
         <div className="skeleton h-6 w-96 rounded-lg" />
-        <div className="grid grid-cols-4 gap-3 mt-6">
-          {[...Array(4)].map((_, i) => <div key={i} className="skeleton rounded-xl h-20" />)}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mt-6">
+          {[...Array(5)].map((_, i) => <div key={i} className="skeleton rounded-xl h-40" />)}
         </div>
-        {[...Array(5)].map((_, i) => <div key={i} className="skeleton rounded-xl h-32 mt-4" />)}
       </div>
     )
   }
 
+  const currentIssues = activeBucket ? bucketIssues[activeBucket] : []
+  const currentBucket = BUCKETS.find(b => b.key === activeBucket)
+  const hasNoClickOutData = bucketIssues.conversion.length === 0
+
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
+    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
       {/* Header */}
       <div className="animate-in" style={{ animationFillMode: 'both' }}>
-        <div className="flex items-center gap-3 mb-1">
-          <h1 className="text-2xl font-bold text-white">Recommendations</h1>
-          <span className="px-3 py-1 rounded-full text-xs font-bold" style={{ background: `${TEAL}20`, color: TEAL }}>
-            {recs.length} actionable
-          </span>
+        <h1 className="text-2xl font-bold text-white mb-1">Issue Command Centre</h1>
+        <p className="text-sm" style={{ color: '#8C8C8C' }}>Monitor your conversion funnel — from search visibility to click-outs</p>
+      </div>
+
+      {/* Watchlist */}
+      {watchlist.length > 0 && (
+        <div className="animate-in" style={{ animationDelay: '30ms', animationFillMode: 'both' }}>
+          <button onClick={() => setWatchlistOpen(!watchlistOpen)} className="flex items-center gap-2 text-sm font-semibold text-white mb-2">
+            <Bookmark size={14} style={{ color: '#F59E0B' }} />
+            Watchlist
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: '#F59E0B20', color: '#F59E0B' }}>{watchlist.length}</span>
+            {watchlistOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          {watchlistOpen && (
+            <div className="rounded-xl p-3 space-y-1 mb-4" style={{ background: '#2A2A2A', border: '1px solid #383838' }}>
+              {watchlist.map((w, i) => (
+                <div key={i} className="flex items-center justify-between text-xs py-1.5 px-2 rounded" style={{ background: '#1A1A1A' }}>
+                  <span className="text-white truncate flex-1">{shortUrl(w.page)}</span>
+                  <span className="text-[#8C8C8C] mx-2">{w.bucket}</span>
+                  <button onClick={() => { const next = watchlist.filter((_, j) => j !== i); saveWatchlist(next); setWatchlist(next) }} className="text-[#EF4444] hover:text-white">
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        <p className="text-secondary">Data-driven insights from your analytics</p>
-      </div>
-
-      {/* Tinder mode button */}
-      <div className="animate-in" style={{ animationDelay: '30ms', animationFillMode: 'both' }}>
-        <button
-          onClick={() => setTinderMode(true)}
-          style={{
-            padding: '10px 20px', borderRadius: 12, border: 'none',
-            background: '#34D399',
-            color: '#fff', fontWeight: 700, fontSize: '0.85rem',
-            cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8,
-            boxShadow: '0 4px 16px #34D39926',
-          }}
-        >
-          <Zap size={16} /> Swipe Review Mode
-        </button>
-      </div>
-
-      {/* Tinder overlay */}
-      {tinderMode && (
-        <RecTinder
-          recommendations={recs.map(r => ({
-            id: r.id,
-            severity: r.severity,
-            category: r.category,
-            iconType: r.icon === Search ? 'search' : r.icon === FileText ? 'file' : r.icon === Target ? 'target' : r.icon === TrendingDown ? 'trending-down' : 'lightbulb',
-            title: r.title,
-            body: r.body,
-            impact: r.impact,
-            item: r.item,
-            metrics: r.metrics,
-          }))}
-          onComplete={(results) => {
-            // Save results to Supabase
-            for (const r of results) {
-              supabase.from('monitor_actions').insert({
-                alert_id: r.id, alert_title: recs.find(x => x.id === r.id)?.title || '',
-                action: r.action, status: 'completed',
-                result: { source: 'tinder_review', action: r.action },
-              })
-            }
-          }}
-          onClose={() => setTinderMode(false)}
-        />
       )}
 
-      {/* Glass tab bar */}
-      <div className="animate-in" style={{
-        animationDelay: '50ms', animationFillMode: 'both',
-        display: 'inline-flex', gap: 4, padding: 4, borderRadius: 14,
-        background: '#2A2A2A',
-        border: '1px solid #2A2A2A',
-        
-      }}>
-        {(['all', 'ctr', 'quick-wins', 'declining', 'opportunities'] as const).map(f => (
-          <button
-            key={f}
-            onClick={() => { setFilter(f); setPage(1) }}
-            style={{
-              padding: '9px 18px', borderRadius: 10, fontSize: '0.8rem', fontWeight: 600,
-              cursor: 'pointer', border: 'none', transition: 'all 0.2s ease',
-              background: filter === f ? '#34D39920' : 'transparent',
-              color: filter === f ? TEAL : '#8A8A8A',
-              backdropFilter: filter === f ? 'blur(8px)' : 'none',
-              boxShadow: filter === f ? '0 2px 8px #34D39915' : 'none',
-            }}
-          >
-            {f === 'all' ? 'All' : catLabel[f]}
-            <span style={{ marginLeft: 5, opacity: 0.5, fontSize: '0.7rem' }}>{counts[f]}</span>
-          </button>
-        ))}
-      </div>
+      {/* Bucket Overview */}
+      {!activeBucket && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 animate-in" style={{ animationDelay: '60ms', animationFillMode: 'both' }}>
+          {BUCKETS.map((bucket, idx) => {
+            const issues = bucketIssues[bucket.key]
+            const count = issues.length
+            const worst = count > 0 ? worstSeverity(issues) : 'minor'
+            const Icon = bucket.icon
+            const isConversion = bucket.gold
+            const showNoData = isConversion && hasNoClickOutData
 
-      {/* Summary glass tiles */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 animate-in" style={{ animationDelay: '100ms', animationFillMode: 'both' }}>
-        {[
-          { label: 'Critical', count: severityCounts.critical, color: RED, borderColor: '#EF44444d' },
-          { label: 'Opportunity', count: severityCounts.opportunity, color: TEAL, borderColor: '#34D3994d' },
-          { label: 'Info', count: severityCounts.info, color: '#6699ff', borderColor: '#3b82f64d' },
-          { label: 'High Impact', count: severityCounts.highImpact, color: '#fff', borderColor: '#383838' },
-        ].map(t => (
-          <div key={t.label} style={{
-            padding: '16px 20px', borderRadius: 14,
-            background: '#2A2A2A',
-            border: `1px solid ${t.count > 0 ? t.borderColor : '#2A2A2A'}`,
-            
-          }}>
-            <div className="text-2xl font-extrabold" style={{ color: t.count > 0 ? t.color : '#383838' }}>{t.count}</div>
-            <div className="text-xs mt-1" style={{ color: '#707070' }}>{t.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Recommendations list */}
-      <div className="space-y-3">
-        {filtered.length === 0 && (
-          <div className="glass-card-static text-center py-16">
-            <Lightbulb size={40} className="mx-auto mb-4" style={{ color: '#383838' }} />
-            <p className="text-secondary">No recommendations in this category.</p>
-          </div>
-        )}
-
-        {paged.map((rec, idx) => {
-          const sev = sevStyle[rec.severity]
-          const Icon = rec.icon
-          const expanded = expandedId === rec.id
-          return (
-            <div
-              key={rec.id}
-              className="animate-in"
-              style={{ animationDelay: `${150 + idx * 20}ms`, animationFillMode: 'both' }}
-            >
-              <div
-                className="glass-card-static"
+            return (
+              <button
+                key={bucket.key}
+                onClick={() => setActiveBucket(bucket.key)}
+                className="text-left rounded-xl p-5 transition-all hover:scale-[1.02] active:scale-[0.98]"
                 style={{
-                  padding: '16px 20px',
-                  borderLeft: `3px solid ${sev.color}`,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
+                  background: '#2A2A2A',
+                  borderLeft: `4px solid ${showNoData ? '#383838' : count > 0 ? SEV_COLORS[worst] : '#34D399'}`,
+                  border: isConversion ? '1px solid #F59E0B40' : '1px solid #383838',
+                  borderLeftWidth: 4,
+                  borderLeftColor: isConversion ? '#F59E0B' : count > 0 ? SEV_COLORS[worst] : '#34D399',
+                  animationDelay: `${100 + idx * 50}ms`,
+                  animationFillMode: 'both',
                 }}
-                onClick={() => setExpandedId(expanded ? null : rec.id)}
               >
-                <div className="flex items-start gap-3">
-                  {/* Icon */}
-                  <div className="shrink-0 mt-1 w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: `${sev.color}12` }}>
-                    <Icon size={16} style={{ color: sev.color }} />
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: isConversion ? '#F59E0B15' : `${count > 0 ? SEV_COLORS[worst] : '#34D399'}15` }}>
+                    {isConversion ? <Star size={16} style={{ color: '#F59E0B' }} /> : <Icon size={16} style={{ color: count > 0 ? SEV_COLORS[worst] : '#34D399' }} />}
                   </div>
+                  {count > 0 && <span className="text-lg">{SEV_EMOJI[worst]}</span>}
+                </div>
+                <h3 className="text-sm font-bold text-white mb-1">{bucket.name}</h3>
+                <div className="text-2xl font-extrabold mb-1" style={{ color: showNoData ? '#383838' : count > 0 ? SEV_COLORS[worst] : '#34D399' }}>
+                  {showNoData ? '—' : count}
+                </div>
+                <p className="text-[11px]" style={{ color: '#707070' }}>
+                  {showNoData ? 'Not yet configured' : count === 0 ? 'All clear' : `${issues.filter(i => i.severity === 'critical').length} critical`}
+                </p>
+              </button>
+            )
+          })}
+        </div>
+      )}
 
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    {/* Badges row */}
-                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider" style={{ background: `${sev.color}18`, color: sev.color }}>
-                        {sev.label}
-                      </span>
-                      <span className="text-[10px] font-medium" style={{ color: '#707070' }}>
-                        {catLabel[rec.category]}
-                      </span>
-                    </div>
+      {/* Drill-Down View */}
+      {activeBucket && currentBucket && (
+        <div className="animate-in" style={{ animationFillMode: 'both' }}>
+          {/* Back + Summary */}
+          <button onClick={() => { setActiveBucket(null); setExpandedRow(null) }} className="flex items-center gap-1 text-sm mb-4 hover:text-white transition-colors" style={{ color: '#8C8C8C' }}>
+            <ChevronLeft size={16} /> Back to overview
+          </button>
 
-                    {/* Title */}
-                    <h3 className="text-sm font-bold text-white mb-1">{rec.title}</h3>
+          <div className="flex items-center gap-3 mb-4">
+            <currentBucket.icon size={20} style={{ color: currentBucket.gold ? '#F59E0B' : '#34D399' }} />
+            <h2 className="text-lg font-bold text-white">{currentBucket.name}</h2>
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold" style={{ background: '#383838', color: '#8C8C8C' }}>{currentIssues.length} pages</span>
+            {currentIssues.length > 0 && (
+              <div className="flex gap-2 ml-2">
+                {(['critical', 'warning', 'minor'] as Severity[]).map(s => {
+                  const c = currentIssues.filter(i => i.severity === s).length
+                  if (c === 0) return null
+                  return <span key={s} className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ background: `${SEV_COLORS[s]}15`, color: SEV_COLORS[s] }}>{c} {s}</span>
+                })}
+              </div>
+            )}
+          </div>
 
-                    {/* Body */}
-                    <p className="text-xs" style={{ color: '#8C8C8C', lineHeight: 1.6 }}>{rec.body}</p>
+          {/* Conversion bucket empty state */}
+          {activeBucket === 'conversion' && hasNoClickOutData && (
+            <div className="rounded-xl p-8 text-center" style={{ background: '#2A2A2A', border: '1px solid #F59E0B30' }}>
+              <DollarSign size={40} className="mx-auto mb-3" style={{ color: '#F59E0B40' }} />
+              <h3 className="text-white font-bold mb-2">Click-out tracking not yet configured</h3>
+              <p className="text-sm mb-4" style={{ color: '#8C8C8C' }}>
+                Set up GA4 key events to track outbound clicks to bank application pages. Once data flows, this bucket will automatically detect declining click-outs on revenue pages.
+              </p>
+              <div className="inline-block rounded-lg px-4 py-2 text-xs font-mono" style={{ background: '#1A1A1A', color: '#707070' }}>
+                ga4_pages.affiliate_clicks → currently all 0
+              </div>
+            </div>
+          )}
 
-                    {/* Affected item */}
-                    <div className="mt-2 text-xs" style={{ color: '#606060' }}>
-                      → {rec.item.startsWith('http') ? shortUrl(rec.item) : rec.item}
-                    </div>
+          {/* Issues Table */}
+          {currentIssues.length > 0 && (
+            <div className="rounded-xl overflow-hidden" style={{ background: '#2A2A2A', border: '1px solid #383838' }}>
+              {/* Header */}
+              <div className="grid grid-cols-12 gap-2 px-4 py-3 text-[10px] font-bold uppercase tracking-wider" style={{ color: '#707070', borderBottom: '1px solid #383838' }}>
+                <div className="col-span-4">Page</div>
+                <div className="col-span-1">Metric</div>
+                <div className="col-span-1 text-right">Current</div>
+                <div className="col-span-1 text-right">Previous</div>
+                <div className="col-span-1 text-right">Change</div>
+                <div className="col-span-1 text-center">Severity</div>
+                <div className="col-span-3 text-right">Actions</div>
+              </div>
 
-                    {/* Metrics */}
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {rec.metrics.map(m => (
-                        <span key={m.label} className="px-2 py-1 rounded text-[11px]" style={{ background: '#2A2A2A', color: '#9A9A9A' }}>
-                          {m.label}: <span className="font-bold text-white">{m.value}</span>
+              {/* Rows */}
+              {currentIssues.map((issue, idx) => {
+                const isExpanded = expandedRow === issue.page
+                const isWatched = watchlist.some(w => w.page === issue.page && w.bucket === activeBucket)
+                return (
+                  <div key={issue.page} className="animate-in" style={{ animationDelay: `${idx * 20}ms`, animationFillMode: 'both' }}>
+                    <div className="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-white/[0.02] transition-colors" style={{ borderBottom: '1px solid #2A2A2A' }}>
+                      <div className="col-span-4 truncate text-white font-medium text-xs" title={issue.page}>{shortUrl(issue.page)}</div>
+                      <div className="col-span-1 text-[11px]" style={{ color: '#8C8C8C' }}>{issue.primaryMetric}</div>
+                      <div className="col-span-1 text-right text-xs text-white">{issue.primaryMetric === 'CTR' ? `${issue.current.toFixed(1)}%` : issue.primaryMetric === 'Position' ? `#${issue.current.toFixed(1)}` : fmt(issue.current)}</div>
+                      <div className="col-span-1 text-right text-xs" style={{ color: '#707070' }}>{issue.primaryMetric === 'CTR' ? `${issue.previous.toFixed(1)}%` : issue.primaryMetric === 'Position' ? `#${issue.previous.toFixed(1)}` : fmt(issue.previous)}</div>
+                      <div className="col-span-1 text-right text-xs font-bold" style={{ color: SEV_COLORS[issue.severity] }}>
+                        {issue.primaryMetric === 'Position' ? `+${issue.changePct.toFixed(1)}` : pct(issue.changePct)}
+                      </div>
+                      <div className="col-span-1 text-center text-xs">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase" style={{ background: `${SEV_COLORS[issue.severity]}15`, color: SEV_COLORS[issue.severity] }}>
+                          {issue.severity}
                         </span>
-                      ))}
+                      </div>
+                      <div className="col-span-3 flex justify-end gap-1">
+                        <button onClick={() => handleDiagnose(issue, activeBucket)} className="px-2 py-1 rounded text-[10px] font-semibold flex items-center gap-1 hover:bg-white/10 transition-colors" style={{ color: '#6366f1', border: '1px solid #6366f140' }}>
+                          <Stethoscope size={10} /> Diagnose
+                        </button>
+                        <button onClick={() => setExpandedRow(isExpanded ? null : issue.page)} className="px-2 py-1 rounded text-[10px] font-semibold flex items-center gap-1 hover:bg-white/10 transition-colors" style={{ color: '#34D399', border: '1px solid #34D39940' }}>
+                          <GitCompare size={10} /> Compare
+                        </button>
+                        <button onClick={() => toggleWatch(issue, activeBucket)} className="px-2 py-1 rounded text-[10px] font-semibold flex items-center gap-1 hover:bg-white/10 transition-colors" style={{ color: isWatched ? '#F59E0B' : '#8C8C8C', border: `1px solid ${isWatched ? '#F59E0B40' : '#38383840'}` }}>
+                          <Bookmark size={10} fill={isWatched ? '#F59E0B' : 'none'} /> {isWatched ? 'Watched' : 'Watch'}
+                        </button>
+                      </div>
                     </div>
 
-                    {/* Expanded action buttons */}
-                    {expanded && (
-                      <div className="mt-4 pt-3" style={{ borderTop: '1px solid #2A2A2A' }}>
-                        <div className="flex gap-2">
-                          {[
-                            { label: 'Ignore', bg: '#2A2A2A', color: '#8A8A8A' },
-                            { label: 'Fix', bg: `${TEAL}15`, color: TEAL },
-                            { label: 'Analysis', bg: `${NAVY}25`, color: '#6699ff' },
-                            { label: 'Implement', bg: '#8B5CF626', color: '#a78bfa' },
-                          ].map(btn => (
-                            <button key={btn.label} style={{
-                              padding: '6px 14px', borderRadius: 8, fontSize: '0.75rem', fontWeight: 600,
-                              cursor: 'pointer', border: `1.5px solid ${btn.color}`, background: 'transparent', color: btn.color,
-                              transition: 'all 0.15s',
-                            }}>
-                              {btn.label}
-                            </button>
-                          ))}
+                    {/* Compare expansion */}
+                    {isExpanded && (
+                      <div className="px-6 py-4" style={{ background: '#1A1A1A', borderBottom: '1px solid #383838' }}>
+                        <div className="grid grid-cols-2 gap-6">
+                          <div>
+                            <h4 className="text-[10px] uppercase tracking-wider mb-2 font-bold" style={{ color: '#34D399' }}>Current Period</h4>
+                            {Object.entries(issue.currentMetrics).map(([k, v]) => (
+                              <div key={k} className="flex justify-between text-xs py-1">
+                                <span style={{ color: '#8C8C8C' }}>{k.replace(/_/g, ' ')}</span>
+                                <span className="text-white font-medium">{typeof v === 'number' ? (k.includes('rate') || k === 'ctr' ? `${v.toFixed(1)}%` : k === 'position' ? `#${v.toFixed(1)}` : fmt(v)) : v}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div>
+                            <h4 className="text-[10px] uppercase tracking-wider mb-2 font-bold" style={{ color: '#707070' }}>Previous Period</h4>
+                            {Object.entries(issue.previousMetrics).map(([k, v]) => (
+                              <div key={k} className="flex justify-between text-xs py-1">
+                                <span style={{ color: '#8C8C8C' }}>{k.replace(/_/g, ' ')}</span>
+                                <span style={{ color: '#707070' }}>{typeof v === 'number' ? (k.includes('rate') || k === 'ctr' ? `${v.toFixed(1)}%` : k === 'position' ? `#${v.toFixed(1)}` : fmt(v)) : v}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}
                   </div>
+                )
+              })}
+            </div>
+          )}
 
-                  {/* Right side */}
-                  <div className="shrink-0 flex flex-col items-end gap-2">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase" style={{ color: impactColor[rec.impact] }}>
-                      {rec.impact === 'high' ? 'HIGH IMPACT' : rec.impact === 'medium' ? 'MEDIUM' : 'LOW'}
-                    </span>
-                    <Eye size={14} style={{ color: '#383838' }} />
+          {currentIssues.length === 0 && activeBucket !== 'conversion' && (
+            <div className="rounded-xl p-12 text-center" style={{ background: '#2A2A2A', border: '1px solid #383838' }}>
+              <currentBucket.icon size={40} className="mx-auto mb-3" style={{ color: '#34D39940' }} />
+              <p className="text-white font-semibold mb-1">All clear!</p>
+              <p className="text-sm" style={{ color: '#8C8C8C' }}>No issues detected in this bucket for the selected period.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Diagnosis Modal */}
+      {diagnosing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
+          <div className="rounded-2xl w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto" style={{ background: '#1A1A1A', border: '1px solid #383838' }}>
+            <div className="flex items-center justify-between p-5 pb-3" style={{ borderBottom: '1px solid #2A2A2A' }}>
+              <div>
+                <h3 className="text-white font-bold">AI Diagnosis</h3>
+                <p className="text-[11px]" style={{ color: '#707070' }}>{shortUrl(diagnosing)}</p>
+              </div>
+              <button onClick={closeDiagnosis} className="p-2 rounded-lg hover:bg-white/10"><X size={16} /></button>
+            </div>
+
+            <div className="p-5">
+              {!diagnosis ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 size={24} className="animate-spin" style={{ color: '#6366f1' }} />
+                  <span className="ml-3 text-sm" style={{ color: '#8C8C8C' }}>Analyzing...</span>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {diagnosis.recommendation ? (
+                    <>
+                      <div>
+                        <h4 className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: '#6366f1' }}>Problem Summary</h4>
+                        <p className="text-sm text-white">{diagnosis.recommendation.summary}</p>
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: '#F59E0B' }}>Root Cause Analysis</h4>
+                        <p className="text-sm" style={{ color: '#8C8C8C' }}>{diagnosis.recommendation.rootCause}</p>
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: '#34D399' }}>Recommended Actions</h4>
+                        <ol className="space-y-2">
+                          {(diagnosis.recommendation.steps || []).map((step: string, i: number) => (
+                            <li key={i} className="flex gap-2 text-sm">
+                              <span className="shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: '#34D39920', color: '#34D399' }}>{i + 1}</span>
+                              <span style={{ color: '#C0C0C0' }}>{step}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                      <div className="flex gap-4">
+                        <div>
+                          <h4 className="text-[10px] uppercase tracking-wider font-bold" style={{ color: '#707070' }}>Priority</h4>
+                          <span className="text-sm font-bold text-white uppercase">{diagnosis.recommendation.priority}</span>
+                        </div>
+                        <div>
+                          <h4 className="text-[10px] uppercase tracking-wider font-bold" style={{ color: '#707070' }}>Est. Impact</h4>
+                          <span className="text-sm" style={{ color: '#8C8C8C' }}>{diagnosis.recommendation.impact}</span>
+                        </div>
+                      </div>
+                    </>
+                  ) : diagnosis.tasks ? (
+                    <>
+                      <h4 className="text-sm font-bold text-white">{diagnosis.heading}</h4>
+                      <ol className="space-y-2">
+                        {diagnosis.tasks.map((t: any, i: number) => (
+                          <li key={i} className="text-sm">
+                            <span className="font-semibold text-white">{t.title}</span>
+                            <p className="text-xs mt-0.5" style={{ color: '#8C8C8C' }}>{t.detail}</p>
+                          </li>
+                        ))}
+                      </ol>
+                    </>
+                  ) : (
+                    <p className="text-sm" style={{ color: '#8C8C8C' }}>{JSON.stringify(diagnosis)}</p>
+                  )}
+
+                  <div className="flex gap-2 pt-2" style={{ borderTop: '1px solid #2A2A2A' }}>
+                    <button onClick={closeDiagnosis} className="px-4 py-2 rounded-lg text-xs font-semibold" style={{ background: '#383838', color: '#8C8C8C' }}>Close</button>
+                    <button onClick={() => sendToChat(`Analyze the issue on ${shortUrl(diagnosing)}: ${diagnosis.recommendation?.summary || diagnosis.heading || 'Investigate this page'}`)} className="px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1" style={{ background: '#6366f120', color: '#6366f1', border: '1px solid #6366f140' }}>
+                      <Send size={10} /> Send to Chat
+                    </button>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
-          )
-        })}
-      </div>
-
-      {/* Pagination Controls */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-3 pt-2 animate-in" style={{ animationDelay: '200ms', animationFillMode: 'both' }}>
-          <button
-            onClick={() => { setPage(p => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
-            disabled={page <= 1}
-            style={{
-              padding: '8px 14px', borderRadius: 10, border: 'none', cursor: page <= 1 ? 'default' : 'pointer',
-              background: page <= 1 ? '#2A2A2A' : '#34D3991a',
-              color: page <= 1 ? '#383838' : TEAL, fontWeight: 600, fontSize: '0.8rem',
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-            }}
-          >
-            <ChevronLeft size={14} /> Prev
-          </button>
-          <span className="text-xs text-secondary">
-            Page <span className="text-white font-bold">{page}</span> of <span className="text-white font-bold">{totalPages}</span>
-            <span style={{ marginLeft: 8, opacity: 0.5 }}>({filtered.length} total)</span>
-          </span>
-          <button
-            onClick={() => { setPage(p => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
-            disabled={page >= totalPages}
-            style={{
-              padding: '8px 14px', borderRadius: 10, border: 'none', cursor: page >= totalPages ? 'default' : 'pointer',
-              background: page >= totalPages ? '#2A2A2A' : '#34D3991a',
-              color: page >= totalPages ? '#383838' : TEAL, fontWeight: 600, fontSize: '0.8rem',
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-            }}
-          >
-            Next <ChevronRight size={14} />
-          </button>
+          </div>
         </div>
       )}
     </div>

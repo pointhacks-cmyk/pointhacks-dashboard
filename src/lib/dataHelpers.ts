@@ -50,8 +50,8 @@ export function aggregateRows<T extends Record<string, any>>(raw: any[], groupKe
       [groupKey]: k,
       clicks: v.clicks,
       impressions: v.impressions,
-      ctr: (v.ctr_sum / v.count) * 100,
-      position: v.pos_sum / v.count,
+      ctr: v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0,
+      position: v.impressions > 0 ? v.pos_sum / v.count : v.pos_sum / v.count,
     } as unknown as T))
     .sort((a: any, b: any) => b.clicks - a.clicks)
 }

@@ -213,12 +213,12 @@ export default function ChatPage() {
           <p className="text-[10px] uppercase tracking-wider text-white/30 font-semibold mb-2 px-1">Ask About</p>
           <div className="grid grid-cols-2 gap-1.5">
             {[
-              { icon: BarChart3, label: 'Traffic', query: 'Give me a full traffic report for this week', color: '#6366f1' },
-              { icon: Search, label: 'Keywords', query: 'Analyze my top performing keywords', color: '#34D399' },
-              { icon: FileText, label: 'Pages', query: 'Which pages perform best?', color: '#8B5CF6' },
-              { icon: AlertTriangle, label: 'Issues', query: 'Show me any issues or declining metrics', color: '#EF4444' },
-              { icon: Globe, label: 'SEO', query: 'Show keyword opportunities', color: '#F59E0B' },
-              { icon: TrendingUp, label: 'Trends', query: 'Compare this week vs last week', color: '#6366f1' },
+              { icon: AlertTriangle, label: 'Worst CC Pages', query: 'Show me my worst performing credit card pages', color: '#EF4444' },
+              { icon: FileText, label: 'Content Updates', query: 'Which pages need content updates?', color: '#8B5CF6' },
+              { icon: TrendingUp, label: 'Weekly Changes', query: 'What changed since last week?', color: '#6366f1' },
+              { icon: BarChart3, label: 'CC Performance', query: 'Compare /credit-cards/ performance vs last month', color: '#34D399' },
+              { icon: Search, label: 'Lost Queries', query: 'Which queries are we losing to competitors?', color: '#F59E0B' },
+              { icon: Globe, label: 'Click-Outs', query: "What's the click-out trend for credit card pages?", color: '#6366f1' },
             ].map((a) => (
               <button
                 key={a.label}

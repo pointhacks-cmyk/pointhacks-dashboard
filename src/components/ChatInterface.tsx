@@ -26,21 +26,21 @@ interface ChatInterfaceProps {
 }
 
 const SUGGESTIONS = [
-  'Show me declining pages',
-  'What are my top 10 keywords?',
+  'Show me declining credit card pages',
+  'Which /credit-cards/ pages have the worst CTR?',
+  'Top 10 revenue keywords',
   'Compare this week vs last week',
-  'Which pages have the worst CTR?',
-  'Show keyword opportunities',
+  'SEO health check for /credit-cards/',
+  'Position changes for Qantas pages',
+  'Quick wins — keywords almost on page 1',
   'Full traffic report',
-  'Position distribution breakdown',
-  'Top pages by clicks',
 ]
 
 const QUICK_ACTIONS = [
-  { label: 'Traffic Report', query: 'Give me a full traffic report for this week' },
-  { label: 'Keyword Analysis', query: 'Analyze my top 10 performing keywords with recommendations' },
-  { label: 'Weekly Summary', query: 'Compare this week vs last week across all metrics' },
-  { label: 'SEO Issues', query: 'Run an SEO health check and show me all issues' },
+  { label: 'CC Pages Health', query: 'SEO health check for /credit-cards/ pages — show declining pages, CTR issues, and position drops' },
+  { label: 'Revenue Keywords', query: 'Show my top revenue-driving keywords for credit card pages with position and CTR' },
+  { label: 'Weekly Comparison', query: 'Compare this week vs last week for /credit-cards/, /qantas/, /velocity/, and /amex/ sections' },
+  { label: 'Quick Wins', query: 'Find quick wins — keywords at position 4-15 with high impressions, especially for credit card pages' },
 ]
 
 function badge(label: string, value: string | number, color: string): string {

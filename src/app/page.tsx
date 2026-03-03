@@ -15,7 +15,7 @@ import {
   LineChart, Line
 } from 'recharts'
 
-const NAVY = '#6366f1', TEAL = '#34D399', RED = '#EF4444', GOLD = '#F59E0B', PURPLE = '#8B5CF6'
+const NAVY = '#003399', TEAL = '#5FD6BF', RED = '#DC2430', GOLD = '#ffc107', PURPLE = '#7B4397'
 const CHART_COLORS = [TEAL, NAVY, PURPLE, GOLD, RED, '#ff6b9d', '#66aaff']
 const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : n.toLocaleString()
 const fmtFull = (n: number) => n.toLocaleString()
@@ -182,12 +182,16 @@ export default function OverviewPage() {
   const totalSessions = channelAgg.reduce((s, c) => s + c.value, 0)
 
   const topPages = useMemo(() => {
-    return ga4Pages
-      .map(p => ({
-        page: p.page_path || p.page || '',
-        views: p.page_views || p.sessions || 0,
-      }))
-      .filter(p => p.page)
+    // Aggregate by page path (multiple date rows per page)
+    const map = new Map<string, number>()
+    for (const p of ga4Pages) {
+      const page = p.page_path || p.page || ''
+      if (!page) continue
+      map.set(page, (map.get(page) || 0) + (p.page_views || p.sessions || 0))
+    }
+    return Array.from(map.entries())
+      .map(([page, views]) => ({ page, views }))
+      .sort((a, b) => b.views - a.views)
       .slice(0, 10)
   }, [ga4Pages])
 
@@ -522,7 +526,7 @@ export default function OverviewPage() {
                           border: `1px solid ${isBreakout ? '#34D39930' : '#F59E0B30'}`,
                         }}>
                           {q.query}
-                          <span style={{ fontSize: 9, opacity: 0.8 }}>{isBreakout ? '🚀' : `+${q.value}`}</span>
+                          <span style={{ fontSize: 9, opacity: 0.8 }}>{isBreakout ? 'NEW' : `+${q.value}`}</span>
                         </span>
                       )
                     })}
