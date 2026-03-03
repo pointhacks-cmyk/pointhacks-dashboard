@@ -16,6 +16,7 @@ import {
   LogOut,
   ChevronUp,
   TrendingUp,
+  Newspaper,
 } from 'lucide-react'
 
 const navSections = [
@@ -28,6 +29,7 @@ const navSections = [
       { name: 'SEO Intelligence', href: '/seo', icon: LinkIcon },
       { name: 'Audience', href: '/audience', icon: Users },
       { name: 'Trends', href: '/trends', icon: TrendingUp },
+      { name: 'News Scanner', href: '/news', icon: Newspaper },
     ],
   },
   {
