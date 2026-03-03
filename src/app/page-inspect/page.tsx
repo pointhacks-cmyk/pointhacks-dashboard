@@ -344,8 +344,11 @@ export default function PageInspectPage() {
                           <div className="text-sm text-zinc-400 truncate">{comp.title}</div>
                         </div>
                       </div>
-                      <div className="mb-3">
+                      <div className="mb-3 flex gap-2 flex-wrap">
                         <ThreatBadge level={comp.threatLevel} />
+                        {(comp.domain?.includes('finder.com.au') || comp.domain?.includes('canstar.com.au')) && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">⭐ Primary Competitor</span>
+                        )}
                       </div>
                       <p className="text-sm text-zinc-300 mb-3">{comp.whyTheyRank}</p>
                       <a

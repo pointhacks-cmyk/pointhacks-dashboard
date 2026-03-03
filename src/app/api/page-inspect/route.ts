@@ -105,15 +105,41 @@ export async function POST(req: NextRequest) {
     const ourContent = await fetchPageContent(fullUrl)
 
     const topQueries = (relatedQueries || []).slice(0, 5).map((q: any) => q.query)
+    
+    // Primary competitors — ALWAYS benchmark against these
+    const PRIMARY_COMPETITORS = ['finder.com.au', 'canstar.com.au']
+    
+    // Step 3a: Find equivalent pages on primary competitors
     const competitorResults: any[] = []
     const seenDomains = new Set(['pointhacks.com.au', 'www.pointhacks.com.au'])
     
+    // Search for each primary competitor's equivalent page
+    for (const competitor of PRIMARY_COMPETITORS) {
+      const mainQuery = topQueries[0] || searchTerms
+      if (!mainQuery) continue
+      // Search specifically on the competitor's site
+      const siteResults = await braveSearch(`site:${competitor} ${mainQuery}`, 5)
+      if (siteResults.length > 0) {
+        const best = siteResults[0]
+        seenDomains.add(best.domain)
+        competitorResults.push({ ...best, matchedQuery: mainQuery, isPrimary: true })
+      } else {
+        // Fallback: try with search terms
+        const fallback = await braveSearch(`site:${competitor} ${searchTerms}`, 5)
+        if (fallback.length > 0) {
+          seenDomains.add(fallback[0].domain)
+          competitorResults.push({ ...fallback[0], matchedQuery: searchTerms, isPrimary: true })
+        }
+      }
+    }
+    
+    // Step 3b: Find additional competitors from organic search
     for (const query of topQueries.slice(0, 3)) {
       const results = await braveSearch(query + ' australia', 10)
       for (const r of results) {
         if (seenDomains.has(r.domain)) continue
         seenDomains.add(r.domain)
-        competitorResults.push({ ...r, matchedQuery: query })
+        competitorResults.push({ ...r, matchedQuery: query, isPrimary: false })
         if (competitorResults.length >= 8) break
       }
       if (competitorResults.length >= 8) break
@@ -124,12 +150,16 @@ export async function POST(req: NextRequest) {
       for (const r of directResults) {
         if (seenDomains.has(r.domain)) continue
         seenDomains.add(r.domain)
-        competitorResults.push({ ...r, matchedQuery: searchTerms })
+        competitorResults.push({ ...r, matchedQuery: searchTerms, isPrimary: false })
         if (competitorResults.length >= 8) break
       }
     }
 
-    const topCompetitors = competitorResults.slice(0, 3)
+    // Always fetch primary competitors first, then fill with others (max 5 total)
+    const primaryComps = competitorResults.filter(c => c.isPrimary)
+    const otherComps = competitorResults.filter(c => !c.isPrimary)
+    const topCompetitors = [...primaryComps, ...otherComps].slice(0, 5)
+    
     const competitorContents = await Promise.all(
       topCompetitors.map(async (comp) => ({
         ...comp,
@@ -146,6 +176,8 @@ export async function POST(req: NextRequest) {
     }
 
     const prompt = `You are an SEO analyst for Point Hacks (pointhacks.com.au), Australia's leading credit card affiliate site. Revenue = users clicking out to bank application pages.
+
+PRIMARY COMPETITORS to benchmark against are Finder.com.au and Canstar.com.au. These are the two biggest threats. Pay special attention to what they do differently — content structure, features, tools, card data, UX elements, comparison tables, filters, calculators, and any interactive elements.
 
 I need a competitive analysis comparing our page against competitor pages ranking for the same keywords.
 
