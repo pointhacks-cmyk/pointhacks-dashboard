@@ -36,13 +36,13 @@ const PARTNER_COLORS: Record<string, string> = {
   'American Express': '#006FCF',
   'ANZ': '#004B8D',
   'NAB': '#D4A843',
-  'Westpac': '#DA1710',
+  'Westpac': '#B0B0B0',
   'Qantas': '#E0001A',
   'Citi': '#1A8FCE',
   'HSBC': '#DB0011',
 }
 const FALLBACK_COLORS = ['#5FD6BF', '#7B4397', '#ffc107', '#4ade80', '#f472b6', '#60a5fa', '#fb923c']
-const PIE_COLORS = ['#006FCF', '#004B8D', '#D4A843', '#DA1710', '#E0001A', '#1A8FCE', '#DB0011']
+const PIE_COLORS = ['#006FCF', '#004B8D', '#D4A843', '#B0B0B0', '#E0001A', '#1A8FCE', '#DB0011']
 
 type RangeKey = '7d' | '30d' | '90d' | '12m' | 'all'
 type BrandKey = 'all' | 'Point Hacks' | 'Australian Frequent Flyer'
