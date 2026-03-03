@@ -37,6 +37,7 @@ export default function AudiencePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [audienceMetrics, setAudienceMetrics] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'ga4' | 'internal'>('ga4');
 
   function aggregateSources(rows: TrafficRow[]): { sources: SourceSummary[]; total: number } {
     const map = new Map<string, number>();
@@ -155,13 +156,33 @@ export default function AudiencePage() {
         <p className="text-secondary">GA4 data filtered by date range</p>
       </div>
 
-      {error && (
+      {/* Tab Switcher */}
+      <div className="flex gap-1 bg-[#2A2A2A] rounded-lg border border-[#383838] p-1 w-fit">
+        <button
+          onClick={() => setActiveTab('ga4')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'ga4' ? 'bg-[#383838] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+        >
+          <BarChart3 size={14} />
+          GA4 Analytics
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#34D39918', color: '#34D399', border: '1px solid #34D39930' }}>GA4</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('internal')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'internal' ? 'bg-[#383838] text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+        >
+          <Database size={14} />
+          Social & Audience
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#F59E0B18', color: '#F59E0B', border: '1px solid #F59E0B30' }}>Internal P&amp;L</span>
+        </button>
+      </div>
+
+      {activeTab === 'ga4' && error && (
         <div className="glass-card-static p-6 animate-in" style={{ borderLeft: `3px solid ${RED}`, animationFillMode: 'both' }}>
           <p style={{ color: RED }}>Error: {error}</p>
         </div>
       )}
 
-      {!error && sources.length === 0 && dailyData.length === 0 && (
+      {activeTab === 'ga4' && !error && sources.length === 0 && dailyData.length === 0 && (
         <div className="glass-card-static p-16 text-center animate-in" style={{ animationDelay: '50ms', animationFillMode: 'both' }}>
           <Users size={40} style={{ color: '#383838', margin: '0 auto 1rem' }} />
           <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.5rem' }}>No data for this date range</h3>
@@ -171,7 +192,7 @@ export default function AudiencePage() {
         </div>
       )}
 
-      {!error && (sources.length > 0 || dailyData.length > 0) && (
+      {activeTab === 'ga4' && !error && (sources.length > 0 || dailyData.length > 0) && (
         <>
           {/* Summary cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 animate-in" style={{ animationDelay: '50ms', animationFillMode: 'both' }}>
@@ -321,8 +342,16 @@ export default function AudiencePage() {
       )}
 
       {/* ═══ Social & Audience Growth (Source: Internal P&L Spreadsheet) ═══ */}
-      {audienceMetrics.length > 0 && (
-        <div className="space-y-6" style={{ marginTop: '2rem' }}>
+      {activeTab === 'internal' && audienceMetrics.length === 0 && !loading && (
+        <div className="glass-card-static p-16 text-center">
+          <Database size={40} style={{ color: '#383838', margin: '0 auto 1rem' }} />
+          <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.5rem' }}>No audience metrics data</h3>
+          <p className="text-secondary">Internal P&amp;L data has not been loaded yet.</p>
+        </div>
+      )}
+
+      {activeTab === 'internal' && audienceMetrics.length > 0 && (
+        <div className="space-y-6">
           {/* Source label */}
           <div className="flex items-center gap-2">
             <Database size={14} style={{ color: '#F59E0B' }} />
