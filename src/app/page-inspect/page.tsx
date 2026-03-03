@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import {
   Search, Shield, AlertTriangle, Target, Lightbulb, Copy, ExternalLink,
-  Check, Loader2, FileSearch, ChevronDown, ArrowUpDown, TrendingUp, Eye, MousePointerClick, BarChart3
+  Check, Loader2, FileSearch, ChevronDown, ArrowUpDown, TrendingUp, Eye, MousePointerClick, BarChart3,
+  History, Clock, ChevronRight
 } from 'lucide-react'
 
 const supabase = createClient(
@@ -111,6 +112,10 @@ export default function PageInspectPage() {
   const [suggestions, setSuggestions] = useState<{ page: string; clicks: number }[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [gapSort, setGapSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: 'priority', dir: 'asc' })
+  const [historyList, setHistoryList] = useState<{ id: number; page_path: string; url: string; created_at: string; gsc_metrics: any }[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [historyFilter, setHistoryFilter] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const suggestionsRef = useRef<HTMLDivElement>(null)
 
@@ -141,6 +146,45 @@ export default function PageInspectPage() {
   const filteredSuggestions = suggestions.filter(s =>
     !url || s.page.toLowerCase().includes(url.toLowerCase())
   ).slice(0, 15)
+
+  const fetchHistory = useCallback(async (pagePath?: string) => {
+    setLoadingHistory(true)
+    try {
+      const params = pagePath ? `?page_path=${encodeURIComponent(pagePath)}` : ''
+      const resp = await fetch(`/api/page-inspect/history${params}`)
+      const data = await resp.json()
+      if (Array.isArray(data)) setHistoryList(data)
+    } catch {} finally {
+      setLoadingHistory(false)
+    }
+  }, [])
+
+  const loadInspection = useCallback(async (id: number) => {
+    setLoading(true)
+    setError('')
+    try {
+      const resp = await fetch(`/api/page-inspect/history?id=${id}`)
+      const data = await resp.json()
+      if (data.error) throw new Error(data.error)
+      setResult({
+        url: data.url,
+        pagePath: data.page_path,
+        gscMetrics: data.gsc_metrics,
+        ga4Metrics: data.ga4_metrics,
+        topQueries: data.top_queries || [],
+        allQueries: [],
+        competitors: data.competitors || [],
+        analysis: data.analysis,
+        fetchedAt: data.created_at,
+      })
+      setUrl(data.page_path)
+      setShowHistory(false)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   const inspect = useCallback(async () => {
     if (!url.trim()) return
@@ -192,6 +236,78 @@ export default function PageInspectPage() {
           </div>
           <p className="text-zinc-400">Competitive SWOT analysis for any Point Hacks page</p>
         </div>
+
+        {/* History Toggle */}
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={() => { setShowHistory(!showHistory); if (!showHistory) fetchHistory(historyFilter || undefined) }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white transition-colors text-sm"
+          >
+            <History size={16} />
+            Past Inspections
+            <ChevronRight size={14} className={`transition-transform ${showHistory ? 'rotate-90' : ''}`} />
+          </button>
+        </div>
+
+        {/* History Panel */}
+        {showHistory && (
+          <div className="glass-card-static p-5 mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
+                <Clock size={16} className="text-zinc-400" />
+                Inspection History
+              </h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setHistoryFilter(null); fetchHistory() }}
+                  className={`px-3 py-1 rounded text-xs transition-colors ${!historyFilter ? 'bg-blue-600 text-white' : 'bg-white/5 text-zinc-400 hover:text-white'}`}
+                >
+                  All Pages
+                </button>
+                {url.trim() && (
+                  <button
+                    onClick={() => {
+                      const path = url.trim().replace('https://www.pointhacks.com.au', '').replace('https://pointhacks.com.au', '')
+                      setHistoryFilter(path)
+                      fetchHistory(path)
+                    }}
+                    className={`px-3 py-1 rounded text-xs transition-colors ${historyFilter ? 'bg-blue-600 text-white' : 'bg-white/5 text-zinc-400 hover:text-white'}`}
+                  >
+                    This Page Only
+                  </button>
+                )}
+              </div>
+            </div>
+            {loadingHistory ? (
+              <div className="flex items-center gap-2 text-zinc-500 text-sm py-4">
+                <Loader2 size={14} className="animate-spin" /> Loading...
+              </div>
+            ) : historyList.length === 0 ? (
+              <p className="text-zinc-500 text-sm py-4">No past inspections found.</p>
+            ) : (
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {historyList.map(h => (
+                  <button
+                    key={h.id}
+                    onClick={() => loadInspection(h.id)}
+                    className="w-full text-left px-4 py-3 rounded-lg hover:bg-white/5 flex items-center justify-between group transition-colors"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm text-zinc-200 truncate">{h.page_path}</div>
+                      <div className="text-xs text-zinc-500 mt-0.5">
+                        {new Date(h.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {h.gsc_metrics?.clicks != null && (
+                          <span className="ml-3">{Number(h.gsc_metrics.clicks).toLocaleString()} clicks</span>
+                        )}
+                      </div>
+                    </div>
+                    <ChevronRight size={14} className="text-zinc-600 group-hover:text-zinc-300 shrink-0 ml-2" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* URL Input */}
         <div className="glass-card-static p-6 mb-8">
@@ -266,6 +382,23 @@ export default function PageInspectPage() {
         {/* Results */}
         {result && (
           <div className="space-y-8">
+            {/* Historical banner */}
+            {result.fetchedAt && new Date(result.fetchedAt).getTime() < Date.now() - 60000 && (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-sm">
+                <History size={16} />
+                <span>
+                  Viewing inspection from{' '}
+                  <strong>{new Date(result.fetchedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</strong>
+                </span>
+                <button
+                  onClick={() => { setResult(null); inspect() }}
+                  className="ml-auto px-3 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs transition-colors"
+                >
+                  Run Fresh Inspection
+                </button>
+              </div>
+            )}
+
             {/* Page Summary */}
             <div className="glass-card-static p-6">
               <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">

@@ -277,7 +277,7 @@ Be SPECIFIC. Don't give generic SEO advice. Reference actual content differences
       }
     }
 
-    return NextResponse.json({
+    const result = {
       url: fullUrl,
       pagePath,
       gscMetrics: pageMetrics,
@@ -287,7 +287,24 @@ Be SPECIFIC. Don't give generic SEO advice. Reference actual content differences
       competitors: competitorResults,
       analysis,
       fetchedAt: new Date().toISOString(),
-    })
+    }
+
+    // Save inspection to history
+    try {
+      await supabase.from('page_inspections').insert({
+        page_path: pagePath,
+        url: fullUrl,
+        gsc_metrics: pageMetrics,
+        ga4_metrics: ga4Summary,
+        top_queries: topQueries,
+        competitors: competitorResults,
+        analysis,
+      })
+    } catch (saveErr) {
+      console.error('Failed to save inspection:', saveErr)
+    }
+
+    return NextResponse.json(result)
 
   } catch (err: any) {
     console.error('Page inspect error:', err)
