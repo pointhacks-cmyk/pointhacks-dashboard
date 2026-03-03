@@ -7,7 +7,7 @@ import { fetchAllRows, aggregateRows } from '@/lib/dataHelpers'
 import {
   MousePointerClick, Eye, Target, Search, TrendingUp, TrendingDown,
   Globe, FileText, BarChart3, PieChart as PieIcon, Lightbulb, Layers,
-  ArrowUpRight, ArrowDownRight, Minus, Loader2
+  ArrowUpRight, ArrowDownRight, Minus, Loader2, DollarSign, Star
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -58,6 +58,7 @@ export default function OverviewPage() {
   const [ctrByPos, setCtrByPos] = useState<CTRByPos[]>([])
   const [pageKpis, setPageKpis] = useState<PageKPI[]>([])
   const [loading, setLoading] = useState(true)
+  const [clickOutKPI, setClickOutKPI] = useState<{ total: number; topPages: { page: string; clicks: number }[] }>({ total: 0, topPages: [] })
   const [trendsData, setTrendsData] = useState<{ keywords: string[]; timeline: any[]; risingRelated: any[]; topRelated: any[] } | null>(null)
   const [trendsLoading, setTrendsLoading] = useState(true)
 
@@ -130,6 +131,40 @@ export default function OverviewPage() {
         setDaily((dailyRes.data as DailyRow[]) || [])
         setTraffic((tRes.data as TrafficRow[]) || [])
         setGa4Pages((pagesRes.data as GA4Page[]) || [])
+
+        // Click-out KPI from ga4_pages affiliate_clicks
+        const allGa4Pages = pagesRes.data || []
+        const clickMap = new Map<string, number>()
+        let totalClickOuts = 0
+        for (const p of allGa4Pages as any[]) {
+          const clicks = p.affiliate_clicks || 0
+          totalClickOuts += clicks
+          if (clicks > 0) {
+            const page = p.page_path || ''
+            clickMap.set(page, (clickMap.get(page) || 0) + clicks)
+          }
+        }
+        // For a fuller picture, fetch more pages with affiliate_clicks
+        const { data: clickOutPages } = await supabase
+          .from('ga4_pages')
+          .select('page_path, affiliate_clicks')
+          .gte('date', startDate)
+          .lte('date', endDate)
+          .gt('affiliate_clicks', 0)
+          .order('affiliate_clicks', { ascending: false })
+          .limit(500)
+        if (clickOutPages) {
+          for (const p of clickOutPages) {
+            const page = p.page_path || ''
+            clickMap.set(page, (clickMap.get(page) || 0) + (p.affiliate_clicks || 0))
+          }
+          totalClickOuts = Array.from(clickMap.values()).reduce((s, v) => s + v, 0)
+        }
+        const topRevPages = Array.from(clickMap.entries())
+          .map(([page, clicks]) => ({ page, clicks }))
+          .sort((a, b) => b.clicks - a.clicks)
+          .slice(0, 10)
+        setClickOutKPI({ total: totalClickOuts, topPages: topRevPages })
       } catch (e) {
         // silently handle
       } finally {
@@ -286,12 +321,13 @@ export default function OverviewPage() {
       </div>
 
       {/* 1. Hero KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[
           { label: 'Total Clicks', value: fmt(k.total_clicks), full: fmtFull(k.total_clicks), icon: MousePointerClick, color: TEAL, bg: `${TEAL}12` },
           { label: 'Impressions', value: fmt(k.total_impressions), full: fmtFull(k.total_impressions), icon: Eye, color: NAVY, bg: `${NAVY}20` },
           { label: 'Avg CTR', value: `${(k.avg_ctr * 100).toFixed(1)}%`, full: `${(k.avg_ctr * 100).toFixed(2)}%`, icon: Target, color: PURPLE, bg: `${PURPLE}15` },
           { label: 'Avg Position', value: k.avg_position.toFixed(1), full: k.avg_position.toFixed(2), icon: Search, color: GOLD, bg: `${GOLD}15` },
+          ...(clickOutKPI.total > 0 ? [{ label: 'Click-Outs', value: fmt(clickOutKPI.total), full: `${fmtFull(clickOutKPI.total)} affiliate click-outs`, icon: DollarSign, color: '#F59E0B', bg: '#F59E0B15' }] : []),
         ].map((item, i) => (
           <div key={item.label} className="glass-card p-5 animate-in" style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'both' }}>
             <div className="flex justify-between items-start mb-3">
@@ -401,6 +437,34 @@ export default function OverviewPage() {
           </div>
         </div>
       </div>
+
+      {/* Top Revenue Pages */}
+      {clickOutKPI.topPages.length > 0 && (
+        <div className="glass-card-static p-6 animate-in" style={{ animationDelay: '390ms', animationFillMode: 'both' }}>
+          <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+            <Star size={16} style={{ color: '#F59E0B' }} /> Top Revenue Pages
+          </h2>
+          <p className="text-xs text-secondary mb-4">Pages ranked by affiliate click-outs</p>
+          <div className="space-y-2.5">
+            {clickOutKPI.topPages.map((p, i) => {
+              const maxClicks = clickOutKPI.topPages[0]?.clicks || 1
+              return (
+                <div key={p.page} className="flex items-center gap-3">
+                  <span className="text-xs font-bold w-5 text-center" style={{ color: i < 3 ? '#F59E0B' : '#4A4A4A' }}>{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-white truncate">{pageName(p.page)}</div>
+                    <div className="text-[10px] truncate" style={{ opacity: 0.3 }}>{cleanUrl(p.page)}</div>
+                  </div>
+                  <div className="w-20 h-2 rounded-full overflow-hidden shrink-0" style={{ background: '#2A2A2A' }}>
+                    <div className="h-full rounded-full" style={{ width: `${(p.clicks / maxClicks) * 100}%`, background: '#F59E0B' }} />
+                  </div>
+                  <span className="text-sm font-bold text-white w-16 text-right">{fmt(p.clicks)}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 5. Position Distribution */}

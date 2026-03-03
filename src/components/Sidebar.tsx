@@ -26,7 +26,7 @@ const navSections = [
       { name: 'Overview', href: '/', icon: Home },
       { name: 'Monitor', href: '/monitor', icon: Shield, emphasis: true },
       { name: 'Search & SEO', href: '/search', icon: Search },
-      { name: 'SEO Intelligence', href: '/seo', icon: LinkIcon },
+
       { name: 'Audience', href: '/audience', icon: Users },
       { name: 'Trends', href: '/trends', icon: TrendingUp },
       { name: 'News Scanner', href: '/news', icon: Newspaper },
