@@ -19,9 +19,16 @@ import {
   Newspaper,
   FileSearch,
   DollarSign,
+  HeartPulse,
 } from 'lucide-react'
 
 const navSections = [
+  {
+    label: 'SEO',
+    items: [
+      { name: 'SEO Health', href: '/seo-health', icon: HeartPulse },
+    ],
+  },
   {
     label: 'ANALYTICS',
     items: [
