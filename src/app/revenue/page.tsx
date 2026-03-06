@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
   DollarSign, TrendingUp, TrendingDown, BarChart3, MousePointerClick,
-  CreditCard, ArrowUpDown, ChevronDown
+  CreditCard, ArrowUpDown, ChevronDown, Handshake, Wallet
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
@@ -18,17 +18,22 @@ interface PartnerRow {
   bank_clicks: number
   credit_card_applications: number
   revenue: number
+  sponsorship_revenue: number
   marketing_expenses: number
+  marketing_spend: number
   gross_profit: number
 }
 
 interface AggPartner {
   partner: string
   revenue: number
+  sponsorship_revenue: number
+  total_revenue: number
   gross_profit: number
   bank_clicks: number
   applications: number
   marketing_expenses: number
+  marketing_spend: number
   margin: number
 }
 
@@ -92,7 +97,7 @@ export default function RevenuePage() {
   const [loading, setLoading] = useState(true)
   const [range, setRange] = useState<RangeKey>('30d')
   const [brand, setBrand] = useState<BrandKey>('all')
-  const [sortCol, setSortCol] = useState<'gross_profit' | 'revenue' | 'bank_clicks' | 'applications'>('gross_profit')
+  const [sortCol, setSortCol] = useState<'gross_profit' | 'revenue' | 'total_revenue' | 'sponsorship_revenue' | 'bank_clicks' | 'applications'>('total_revenue')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
 
   useEffect(() => {
@@ -106,7 +111,7 @@ export default function RevenuePage() {
       while (true) {
         let q = supabase
           .from('partner_performance')
-          .select('date, brand, partner, bank_clicks, credit_card_applications, revenue, marketing_expenses, gross_profit')
+          .select('date, brand, partner, bank_clicks, credit_card_applications, revenue, sponsorship_revenue, marketing_expenses, marketing_spend, gross_profit')
           .gte('date', start)
           .lte('date', today)
           .order('date', { ascending: true })
@@ -129,24 +134,35 @@ export default function RevenuePage() {
     const map = new Map<string, AggPartner>()
     for (const r of data) {
       if (r.partner === 'Total') continue
-      const e = map.get(r.partner) || { partner: r.partner, revenue: 0, gross_profit: 0, bank_clicks: 0, applications: 0, marketing_expenses: 0, margin: 0 }
+      const e = map.get(r.partner) || { partner: r.partner, revenue: 0, sponsorship_revenue: 0, total_revenue: 0, gross_profit: 0, bank_clicks: 0, applications: 0, marketing_expenses: 0, marketing_spend: 0, margin: 0 }
       e.revenue += Number(r.revenue) || 0
+      e.sponsorship_revenue += Number(r.sponsorship_revenue) || 0
       e.gross_profit += Number(r.gross_profit) || 0
       e.bank_clicks += Number(r.bank_clicks) || 0
       e.applications += Number(r.credit_card_applications) || 0
       e.marketing_expenses += Number(r.marketing_expenses) || 0
+      e.marketing_spend += Number(r.marketing_spend) || 0
       map.set(r.partner, e)
     }
-    const arr = Array.from(map.values()).map(p => ({ ...p, margin: p.revenue ? (p.gross_profit / p.revenue) * 100 : 0 }))
+    const arr = Array.from(map.values()).map(p => ({
+      ...p,
+      total_revenue: p.revenue + p.sponsorship_revenue,
+      margin: (p.revenue + p.sponsorship_revenue) ? (p.gross_profit / (p.revenue + p.sponsorship_revenue)) * 100 : 0,
+    }))
     arr.sort((a, b) => sortDir === 'desc' ? (b as any)[sortCol] - (a as any)[sortCol] : (a as any)[sortCol] - (b as any)[sortCol])
     return arr
   }, [data, sortCol, sortDir])
 
   const totals = useMemo(() => partnerAgg.reduce((a, p) => ({
-    revenue: a.revenue + p.revenue, gross_profit: a.gross_profit + p.gross_profit,
-    bank_clicks: a.bank_clicks + p.bank_clicks, applications: a.applications + p.applications,
+    revenue: a.revenue + p.revenue,
+    sponsorship_revenue: a.sponsorship_revenue + p.sponsorship_revenue,
+    total_revenue: a.total_revenue + p.total_revenue,
+    gross_profit: a.gross_profit + p.gross_profit,
+    bank_clicks: a.bank_clicks + p.bank_clicks,
+    applications: a.applications + p.applications,
     marketing_expenses: a.marketing_expenses + p.marketing_expenses,
-  }), { revenue: 0, gross_profit: 0, bank_clicks: 0, applications: 0, marketing_expenses: 0 }), [partnerAgg])
+    marketing_spend: a.marketing_spend + p.marketing_spend,
+  }), { revenue: 0, sponsorship_revenue: 0, total_revenue: 0, gross_profit: 0, bank_clicks: 0, applications: 0, marketing_expenses: 0, marketing_spend: 0 }), [partnerAgg])
 
   const chartData = useMemo(() => {
     const partners = [...new Set(data.filter(r => r.partner !== 'Total').map(r => r.partner))]
@@ -175,7 +191,7 @@ export default function RevenuePage() {
   }, [data, range])
 
   const pieData = useMemo(() =>
-    partnerAgg.filter(p => p.gross_profit > 0).map(p => ({ name: p.partner, value: Math.round(p.gross_profit) })),
+    partnerAgg.filter(p => p.total_revenue > 0).map(p => ({ name: p.partner, value: Math.round(p.total_revenue) })),
   [partnerAgg])
 
   const toggleSort = (col: typeof sortCol) => {
@@ -222,13 +238,15 @@ export default function RevenuePage() {
       ) : (
         <div className="space-y-8">
           {/* KPI Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
             {[
+              { label: 'Total Revenue', value: totals.total_revenue, icon: Wallet, prefix: '$' },
+              { label: 'CC Revenue', value: totals.revenue, icon: CreditCard, prefix: '$' },
+              { label: 'Sponsorship Rev', value: totals.sponsorship_revenue, icon: Handshake, prefix: '$' },
               { label: 'Gross Profit', value: totals.gross_profit, icon: DollarSign, prefix: '$' },
-              { label: 'Revenue', value: totals.revenue, icon: BarChart3, prefix: '$' },
+              { label: 'Marketing Spend', value: totals.marketing_expenses + totals.marketing_spend, icon: TrendingDown, prefix: '$' },
               { label: 'Bank Clicks', value: totals.bank_clicks, icon: MousePointerClick, prefix: '' },
-              { label: 'Applications', value: totals.applications, icon: CreditCard, prefix: '' },
-              { label: 'Marketing Spend', value: totals.marketing_expenses, icon: TrendingDown, prefix: '$' },
+              { label: 'Applications', value: totals.applications, icon: BarChart3, prefix: '' },
             ].map(item => (
               <div key={item.label} className="glass-card-static p-5">
                 <div className="flex items-center justify-between mb-2">
@@ -300,39 +318,48 @@ export default function RevenuePage() {
 
             {/* Partner Table */}
             <div className="glass-card-static overflow-hidden lg:col-span-2">
+              <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-[#383838] text-xs text-zinc-500 uppercase">
-                    <th className="text-left p-4">Partner</th>
-                    <th className="text-right p-4 cursor-pointer hover:text-zinc-300" onClick={() => toggleSort('gross_profit')}>
-                      <span className="inline-flex items-center gap-1 justify-end">GP <ArrowUpDown size={12} /></span>
+                  <tr className="border-b border-[#383838] text-[10px] text-zinc-500 uppercase">
+                    <th className="text-left p-3">Partner</th>
+                    <th className="text-right p-3 cursor-pointer hover:text-zinc-300" onClick={() => toggleSort('total_revenue')}>
+                      <span className="inline-flex items-center gap-1 justify-end">Total Rev <ArrowUpDown size={10} /></span>
                     </th>
-                    <th className="text-right p-4 cursor-pointer hover:text-zinc-300" onClick={() => toggleSort('revenue')}>
-                      <span className="inline-flex items-center gap-1 justify-end">Revenue <ArrowUpDown size={12} /></span>
+                    <th className="text-right p-3 cursor-pointer hover:text-zinc-300" onClick={() => toggleSort('revenue')}>
+                      <span className="inline-flex items-center gap-1 justify-end">CC Rev <ArrowUpDown size={10} /></span>
                     </th>
-                    <th className="text-right p-4 cursor-pointer hover:text-zinc-300 hidden md:table-cell" onClick={() => toggleSort('bank_clicks')}>
-                      <span className="inline-flex items-center gap-1 justify-end">Clicks <ArrowUpDown size={12} /></span>
+                    <th className="text-right p-3 cursor-pointer hover:text-zinc-300 hidden md:table-cell" onClick={() => toggleSort('sponsorship_revenue')}>
+                      <span className="inline-flex items-center gap-1 justify-end">Sponsorship <ArrowUpDown size={10} /></span>
                     </th>
-                    <th className="text-right p-4 cursor-pointer hover:text-zinc-300 hidden md:table-cell" onClick={() => toggleSort('applications')}>
-                      <span className="inline-flex items-center gap-1 justify-end">Apps <ArrowUpDown size={12} /></span>
+                    <th className="text-right p-3 cursor-pointer hover:text-zinc-300" onClick={() => toggleSort('gross_profit')}>
+                      <span className="inline-flex items-center gap-1 justify-end">GP <ArrowUpDown size={10} /></span>
                     </th>
-                    <th className="text-right p-4 hidden lg:table-cell">Margin</th>
+                    <th className="text-right p-3 cursor-pointer hover:text-zinc-300 hidden md:table-cell" onClick={() => toggleSort('bank_clicks')}>
+                      <span className="inline-flex items-center gap-1 justify-end">Clicks <ArrowUpDown size={10} /></span>
+                    </th>
+                    <th className="text-right p-3 cursor-pointer hover:text-zinc-300 hidden lg:table-cell" onClick={() => toggleSort('applications')}>
+                      <span className="inline-flex items-center gap-1 justify-end">Apps <ArrowUpDown size={10} /></span>
+                    </th>
+                    <th className="text-right p-3 hidden lg:table-cell">Margin</th>
                   </tr>
                 </thead>
                 <tbody>
                   {partnerAgg.map((p, i) => (
                     <tr key={p.partner} className="border-b border-[#383838] last:border-0 hover:bg-white/[0.02]">
-                      <td className="p-4">
+                      <td className="p-3">
                         <div className="flex items-center gap-2">
                           <div className="w-2 h-2 rounded-full" style={{ background: PARTNER_COLORS[p.partner] || FALLBACK_COLORS[i] }} />
                           <span className="text-sm text-white font-medium">{p.partner}</span>
                         </div>
                       </td>
-                      <td className="p-4 text-right text-sm text-white font-medium">{fmtCurrency(p.gross_profit)}</td>
-                      <td className="p-4 text-right text-sm text-zinc-300">{fmtCurrency(p.revenue)}</td>
-                      <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(p.bank_clicks)}</td>
-                      <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(p.applications)}</td>
-                      <td className="p-4 text-right hidden lg:table-cell">
+                      <td className="p-3 text-right text-sm text-white font-medium">{fmtCurrency(p.total_revenue)}</td>
+                      <td className="p-3 text-right text-sm text-zinc-300">{fmtCurrency(p.revenue)}</td>
+                      <td className="p-3 text-right text-sm text-zinc-400 hidden md:table-cell">{p.sponsorship_revenue > 0 ? fmtCurrency(p.sponsorship_revenue) : <span className="text-zinc-600">—</span>}</td>
+                      <td className="p-3 text-right text-sm text-zinc-300">{fmtCurrency(p.gross_profit)}</td>
+                      <td className="p-3 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(p.bank_clicks)}</td>
+                      <td className="p-3 text-right text-sm text-zinc-400 hidden lg:table-cell">{fmtNum(p.applications)}</td>
+                      <td className="p-3 text-right hidden lg:table-cell">
                         <span className={`text-xs px-2 py-0.5 rounded ${p.margin >= 80 ? 'bg-green-500/20 text-green-400' : p.margin >= 50 ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'}`}>
                           {p.margin.toFixed(0)}%
                         </span>
@@ -340,42 +367,42 @@ export default function RevenuePage() {
                     </tr>
                   ))}
                   <tr className="bg-white/[0.03] font-semibold">
-                    <td className="p-4 text-sm text-zinc-300">Total</td>
-                    <td className="p-4 text-right text-sm text-white">{fmtCurrency(totals.gross_profit)}</td>
-                    <td className="p-4 text-right text-sm text-zinc-300">{fmtCurrency(totals.revenue)}</td>
-                    <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(totals.bank_clicks)}</td>
-                    <td className="p-4 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(totals.applications)}</td>
-                    <td className="p-4 text-right hidden lg:table-cell">
+                    <td className="p-3 text-sm text-zinc-300">Total</td>
+                    <td className="p-3 text-right text-sm text-white">{fmtCurrency(totals.total_revenue)}</td>
+                    <td className="p-3 text-right text-sm text-zinc-300">{fmtCurrency(totals.revenue)}</td>
+                    <td className="p-3 text-right text-sm text-zinc-400 hidden md:table-cell">{totals.sponsorship_revenue > 0 ? fmtCurrency(totals.sponsorship_revenue) : <span className="text-zinc-600">—</span>}</td>
+                    <td className="p-3 text-right text-sm text-zinc-300">{fmtCurrency(totals.gross_profit)}</td>
+                    <td className="p-3 text-right text-sm text-zinc-400 hidden md:table-cell">{fmtNum(totals.bank_clicks)}</td>
+                    <td className="p-3 text-right text-sm text-zinc-400 hidden lg:table-cell">{fmtNum(totals.applications)}</td>
+                    <td className="p-3 text-right hidden lg:table-cell">
                       <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-zinc-300">
-                        {totals.revenue ? ((totals.gross_profit / totals.revenue) * 100).toFixed(0) : 0}%
+                        {totals.total_revenue ? ((totals.gross_profit / totals.total_revenue) * 100).toFixed(0) : 0}%
                       </span>
                     </td>
                   </tr>
                 </tbody>
               </table>
+              </div>
             </div>
           </div>
 
-          {/* Revenue vs Spend */}
-          {partnerAgg.filter(p => p.revenue > 0).length > 0 && (
+          {/* Revenue Breakdown */}
+          {partnerAgg.filter(p => p.total_revenue > 0).length > 0 && (
             <div className="glass-card-static p-6">
               <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <CreditCard size={20} className="text-blue-400" />
-                Revenue per Partner
+                <Wallet size={20} className="text-blue-400" />
+                Revenue Breakdown by Partner
               </h2>
               <div style={{ width: '100%', height: 300 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={partnerAgg.filter(p => p.revenue > 0)}>
+                  <BarChart data={partnerAgg.filter(p => p.total_revenue > 0)}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                     <XAxis dataKey="partner" tick={{ fill: '#aaa', fontSize: 11 }} />
                     <YAxis tick={{ fill: '#666', fontSize: 11 }} tickFormatter={(v: number) => fmtCurrency(v)} />
                     <Tooltip content={<ChartTooltip />} />
-                    <Bar dataKey="revenue" name="Revenue" radius={[4, 4, 0, 0]}>
-                      {partnerAgg.filter(p => p.revenue > 0).map((p, i) => (
-                        <Cell key={p.partner} fill={PARTNER_COLORS[p.partner] || FALLBACK_COLORS[i]} />
-                      ))}
-                    </Bar>
-                    <Bar dataKey="marketing_expenses" name="Marketing Spend" fill="#ef4444" radius={[4, 4, 0, 0]} fillOpacity={0.5} />
+                    <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                    <Bar dataKey="revenue" name="CC Revenue" stackId="rev" fill="#3B82F6" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="sponsorship_revenue" name="Sponsorship" stackId="rev" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
