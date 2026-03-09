@@ -20,6 +20,7 @@ import {
   FileSearch,
   DollarSign,
   HeartPulse,
+  Brain,
 } from 'lucide-react'
 
 const navSections = [
@@ -37,6 +38,7 @@ const navSections = [
       { name: 'Search & SEO', href: '/search', icon: Search },
 
       { name: 'Revenue', href: '/revenue', icon: DollarSign },
+      { name: 'Intelligence', href: '/intelligence', icon: Brain },
       { name: 'Audience', href: '/audience', icon: Users },
       { name: 'Trends', href: '/trends', icon: TrendingUp },
       { name: 'News Scanner', href: '/news', icon: Newspaper },
