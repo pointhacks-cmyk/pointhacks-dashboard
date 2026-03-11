@@ -1,7 +1,7 @@
 'use client'
 import { createContext, useContext, useState, ReactNode, useCallback } from 'react'
 
-export type DatePreset = '7d' | '28d' | '3m' | '6m' | '12m' | 'custom'
+export type DatePreset = 'mtd' | '7d' | '28d' | '3m' | '6m' | '12m' | 'custom'
 
 interface DateRange {
   startDate: string // YYYY-MM-DD
@@ -23,6 +23,7 @@ function computeRange(preset: DatePreset): { start: string; end: string } {
   const end = new Date()
   const start = new Date()
   switch (preset) {
+    case 'mtd': start.setDate(1); break
     case '7d': start.setDate(end.getDate() - 7); break
     case '28d': start.setDate(end.getDate() - 28); break
     case '3m': start.setMonth(end.getMonth() - 3); break

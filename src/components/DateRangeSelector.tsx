@@ -4,6 +4,7 @@ import { useDateRange, DatePreset } from '@/lib/DateRangeContext'
 import { Calendar, GitCompareArrows } from 'lucide-react'
 
 const presets: { key: DatePreset; label: string }[] = [
+  { key: 'mtd', label: 'MTD' },
   { key: '7d', label: '7d' },
   { key: '28d', label: '28d' },
   { key: '3m', label: '3m' },
@@ -64,6 +65,7 @@ export default function DateRangeSelector() {
           type="date"
           value={dateRange.startDate}
           onChange={e => setCustomRange(e.target.value, dateRange.endDate)}
+          onClick={e => (e.target as HTMLInputElement).showPicker?.()}
           style={{
             background: '#1A1A1A',
             border: '1px solid #383838',
@@ -72,6 +74,7 @@ export default function DateRangeSelector() {
             fontSize: '0.75rem',
             color: '#ECECEC',
             outline: 'none',
+            cursor: 'pointer',
           }}
         />
         <span style={{ color: '#606060', fontSize: '0.75rem' }}>–</span>
@@ -79,6 +82,7 @@ export default function DateRangeSelector() {
           type="date"
           value={dateRange.endDate}
           onChange={e => setCustomRange(dateRange.startDate, e.target.value)}
+          onClick={e => (e.target as HTMLInputElement).showPicker?.()}
           style={{
             background: '#1A1A1A',
             border: '1px solid #383838',
@@ -87,6 +91,7 @@ export default function DateRangeSelector() {
             fontSize: '0.75rem',
             color: '#ECECEC',
             outline: 'none',
+            cursor: 'pointer',
           }}
         />
       </div>

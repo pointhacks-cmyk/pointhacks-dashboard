@@ -6,6 +6,7 @@ import {
   CreditCard, ArrowUpDown, ChevronDown, Handshake, Wallet
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { useDateRange } from '@/lib/DateRangeContext'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend, PieChart, Pie, Cell
@@ -37,6 +38,8 @@ interface AggPartner {
   margin: number
 }
 
+type BrandKey = 'all' | 'Point Hacks' | 'Australian Frequent Flyer'
+
 const PARTNER_COLORS: Record<string, string> = {
   'American Express': '#006FCF',
   'ANZ': '#004B8D',
@@ -49,9 +52,6 @@ const PARTNER_COLORS: Record<string, string> = {
 const FALLBACK_COLORS = ['#5FD6BF', '#7B4397', '#ffc107', '#4ade80', '#f472b6', '#60a5fa', '#fb923c']
 const PIE_COLORS = ['#006FCF', '#004B8D', '#D4A843', '#B0B0B0', '#E0001A', '#1A8FCE', '#DB0011']
 
-type RangeKey = '7d' | '30d' | '90d' | '12m' | 'all'
-type BrandKey = 'all' | 'Point Hacks' | 'Australian Frequent Flyer'
-
 function fmtCurrency(n: number) {
   if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
   if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(1)}K`
@@ -62,18 +62,6 @@ function fmtNum(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return n.toLocaleString()
-}
-
-function rangeStart(range: RangeKey): string {
-  const d = new Date()
-  switch (range) {
-    case '7d': d.setDate(d.getDate() - 7); break
-    case '30d': d.setDate(d.getDate() - 30); break
-    case '90d': d.setDate(d.getDate() - 90); break
-    case '12m': d.setFullYear(d.getFullYear() - 1); break
-    case 'all': return '2023-01-01'
-  }
-  return d.toISOString().slice(0, 10)
 }
 
 const ChartTooltip = ({ active, payload, label }: any) => {
@@ -93,9 +81,9 @@ const ChartTooltip = ({ active, payload, label }: any) => {
 }
 
 export default function RevenuePage() {
+  const { dateRange } = useDateRange()
   const [data, setData] = useState<PartnerRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [range, setRange] = useState<RangeKey>('30d')
   const [brand, setBrand] = useState<BrandKey>('all')
   const [sortCol, setSortCol] = useState<'gross_profit' | 'revenue' | 'total_revenue' | 'sponsorship_revenue' | 'bank_clicks' | 'applications'>('total_revenue')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
@@ -104,8 +92,8 @@ export default function RevenuePage() {
     let cancelled = false
     async function load() {
       setLoading(true)
-      const start = rangeStart(range)
-      const today = new Date().toISOString().slice(0, 10)
+      const start = dateRange.startDate
+      const end = dateRange.endDate
       const allRows: PartnerRow[] = []
       let from = 0
       while (true) {
@@ -113,7 +101,7 @@ export default function RevenuePage() {
           .from('partner_performance')
           .select('date, brand, partner, bank_clicks, credit_card_applications, revenue, sponsorship_revenue, marketing_expenses, marketing_spend, gross_profit')
           .gte('date', start)
-          .lte('date', today)
+          .lte('date', end)
           .order('date', { ascending: true })
           .range(from, from + 999)
         if (brand !== 'all') q = q.eq('brand', brand)
@@ -128,7 +116,7 @@ export default function RevenuePage() {
     }
     load()
     return () => { cancelled = true }
-  }, [range, brand])
+  }, [dateRange.startDate, dateRange.endDate, brand])
 
   const partnerAgg = useMemo<AggPartner[]>(() => {
     const map = new Map<string, AggPartner>()
@@ -175,8 +163,9 @@ export default function RevenuePage() {
       entry[r.partner] = (entry[r.partner] || 0) + (Number(r.gross_profit) || 0)
     }
     let points = Array.from(dayMap.entries()).map(([date, vals]) => ({ date, ...vals })).sort((a, b) => a.date.localeCompare(b.date))
-    // Aggregate to weekly for longer ranges
-    if (range !== '7d' && range !== '30d') {
+    // Aggregate to weekly for ranges > 30 days
+    const daySpan = (new Date(dateRange.endDate).getTime() - new Date(dateRange.startDate).getTime()) / 86400000
+    if (daySpan > 35) {
       const weekMap = new Map<string, Record<string, number>>()
       for (const row of points) {
         const d = new Date(row.date)
@@ -188,7 +177,7 @@ export default function RevenuePage() {
       points = Array.from(weekMap.entries()).map(([date, vals]) => ({ date, ...vals })).sort((a, b) => a.date.localeCompare(b.date))
     }
     return { data: points, partners }
-  }, [data, range])
+  }, [data, dateRange.startDate, dateRange.endDate])
 
   const pieData = useMemo(() =>
     partnerAgg.filter(p => p.total_revenue > 0).map(p => ({ name: p.partner, value: Math.round(p.total_revenue) })),
@@ -210,16 +199,8 @@ export default function RevenuePage() {
         <p className="text-zinc-400 text-sm">Gross profit, revenue, and application performance by bank partner</p>
       </div>
 
-      {/* Filters */}
+      {/* Brand Filter */}
       <div className="flex gap-2 flex-wrap">
-        <div className="flex bg-[#2A2A2A] rounded-lg border border-[#383838] overflow-hidden">
-          {(['7d', '30d', '90d', '12m', 'all'] as RangeKey[]).map(r => (
-            <button key={r} onClick={() => setRange(r)}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${range === r ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
-              {r === 'all' ? 'All' : r.toUpperCase()}
-            </button>
-          ))}
-        </div>
         <div className="relative">
           <select value={brand} onChange={e => setBrand(e.target.value as BrandKey)}
             className="appearance-none bg-[#2A2A2A] border border-[#383838] rounded-lg px-3 py-1.5 pr-8 text-xs text-zinc-300 focus:outline-none focus:border-blue-500/50">
