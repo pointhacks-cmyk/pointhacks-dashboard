@@ -64,6 +64,9 @@ export default function OverviewPage() {
   const [trendsLoading, setTrendsLoading] = useState(true)
   const [funnelData, setFunnelData] = useState<any[]>([])
   const [funnelTarget, setFunnelTarget] = useState<number>(0)
+  const [bankData, setBankData] = useState<{ partner: string; clicks: number; apps: number; revenue: number; gp: number; conversion: number }[]>([])
+  const [bankTrend, setBankTrend] = useState<any[]>([])
+  const [bankView, setBankView] = useState<'table' | 'chart'>('table')
 
   useEffect(() => {
     async function load() {
@@ -202,6 +205,59 @@ export default function OverviewPage() {
     }
     loadFunnel()
   }, [])
+
+  // Fetch bank/partner performance
+  useEffect(() => {
+    async function loadBanks() {
+      // Summary by bank for selected date range
+      const { data: summary } = await supabase
+        .from('partner_performance')
+        .select('partner, bank_clicks, credit_card_applications, revenue, gross_profit, application_conversion, date')
+        .gte('date', startDate)
+        .lte('date', endDate)
+      if (summary) {
+        const map = new Map<string, { clicks: number; apps: number; revenue: number; gp: number; convSum: number; count: number }>()
+        for (const r of summary) {
+          const key = r.partner
+          const prev = map.get(key) || { clicks: 0, apps: 0, revenue: 0, gp: 0, convSum: 0, count: 0 }
+          prev.clicks += r.bank_clicks || 0
+          prev.apps += Number(r.credit_card_applications) || 0
+          prev.revenue += Number(r.revenue) || 0
+          prev.gp += Number(r.gross_profit) || 0
+          prev.convSum += Number(r.application_conversion) || 0
+          prev.count++
+          map.set(key, prev)
+        }
+        const arr = Array.from(map.entries()).map(([partner, v]) => ({
+          partner,
+          clicks: v.clicks,
+          apps: Math.round(v.apps),
+          revenue: Math.round(v.revenue),
+          gp: Math.round(v.gp),
+          conversion: v.clicks > 0 ? (v.apps / v.clicks) * 100 : 0,
+        })).sort((a, b) => b.gp - a.gp)
+        setBankData(arr)
+
+        // Monthly trend for chart
+        const monthMap = new Map<string, Map<string, number>>()
+        for (const r of summary) {
+          const month = r.date.slice(0, 7)
+          if (!monthMap.has(month)) monthMap.set(month, new Map())
+          const m = monthMap.get(month)!
+          m.set(r.partner, (m.get(r.partner) || 0) + Number(r.gross_profit || 0))
+        }
+        const months = Array.from(monthMap.keys()).sort().slice(-6)
+        const trend = months.map(m => {
+          const row: any = { month: new Date(m + '-15').toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }) }
+          const vals = monthMap.get(m)!
+          vals.forEach((v, k) => { row[k] = Math.round(v) })
+          return row
+        })
+        setBankTrend(trend)
+      }
+    }
+    loadBanks()
+  }, [startDate, endDate])
 
   // Derived data
   const k = kpis || { total_clicks: 0, total_impressions: 0, avg_ctr: 0, avg_position: 0, unique_queries: 0, top3_count: 0, top10_count: 0 }
@@ -461,6 +517,120 @@ export default function OverviewPage() {
               </ResponsiveContainer>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* By Bank Performance */}
+      {bankData.length > 0 && (
+        <div className="animate-in" style={{ animationDelay: '220ms', animationFillMode: 'both' }}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+              <CreditCard size={16} style={{ color: GOLD }} /> Performance by Bank
+            </h2>
+            <div className="flex gap-1 bg-[#12121a] rounded-lg p-0.5 border border-[#1e1e2e]">
+              {(['table', 'chart'] as const).map(v => (
+                <button key={v} onClick={() => setBankView(v)}
+                  className="px-3 py-1 rounded-md text-xs font-medium transition-all"
+                  style={{ background: bankView === v ? '#1e1e2e' : 'transparent', color: bankView === v ? '#fff' : '#888' }}>
+                  {v === 'table' ? 'Table' : 'Trend'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {bankView === 'table' ? (
+            <div className="glass-card-static p-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-secondary uppercase tracking-wider">
+                      <th className="text-left pb-3 font-medium">Bank</th>
+                      <th className="text-right pb-3 font-medium">Clicks</th>
+                      <th className="text-right pb-3 font-medium">Applications</th>
+                      <th className="text-right pb-3 font-medium">Conv %</th>
+                      <th className="text-right pb-3 font-medium">Revenue</th>
+                      <th className="text-right pb-3 font-medium">Gross Profit</th>
+                      <th className="pb-3 pl-4 font-medium">Share</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const totalGP = bankData.reduce((s, b) => s + b.gp, 0)
+                      return bankData.map((b, i) => {
+                        const share = totalGP > 0 ? (b.gp / totalGP) * 100 : 0
+                        const bankColors: Record<string, string> = {
+                          'Westpac': '#D5002B', 'American Express': '#006FCF', 'NAB': '#C8102E',
+                          'Qantas': '#E0001B', 'HSBC': '#DB0011', 'ANZ': '#003D6A', 'Citi': '#003B70'
+                        }
+                        const color = bankColors[b.partner] || CHART_COLORS[i % CHART_COLORS.length]
+                        return (
+                          <tr key={b.partner} className="border-t border-[#1e1e2e]">
+                            <td className="py-3 flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+                              <span className="text-white font-medium">{b.partner}</span>
+                            </td>
+                            <td className="py-3 text-right text-white">{fmtFull(b.clicks)}</td>
+                            <td className="py-3 text-right text-white">{fmtFull(b.apps)}</td>
+                            <td className="py-3 text-right" style={{ color: b.conversion >= 5 ? TEAL : b.conversion >= 3 ? GOLD : '#888' }}>
+                              {b.conversion.toFixed(1)}%
+                            </td>
+                            <td className="py-3 text-right text-white">${fmt(b.revenue)}</td>
+                            <td className="py-3 text-right font-semibold" style={{ color: TEAL }}>${fmt(b.gp)}</td>
+                            <td className="py-3 pl-4">
+                              <div className="flex items-center gap-2">
+                                <div className="w-16 h-2 rounded-full overflow-hidden" style={{ background: '#2A2A2A' }}>
+                                  <div className="h-full rounded-full" style={{ width: `${share}%`, background: color }} />
+                                </div>
+                                <span className="text-xs text-secondary w-10 text-right">{share.toFixed(0)}%</span>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })
+                    })()}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-[#2e2e3e]">
+                      <td className="py-3 text-white font-semibold">Total</td>
+                      <td className="py-3 text-right text-white font-semibold">{fmtFull(bankData.reduce((s, b) => s + b.clicks, 0))}</td>
+                      <td className="py-3 text-right text-white font-semibold">{fmtFull(bankData.reduce((s, b) => s + b.apps, 0))}</td>
+                      <td className="py-3 text-right text-secondary">
+                        {(bankData.reduce((s, b) => s + b.apps, 0) / Math.max(bankData.reduce((s, b) => s + b.clicks, 0), 1) * 100).toFixed(1)}%
+                      </td>
+                      <td className="py-3 text-right text-white font-semibold">${fmt(bankData.reduce((s, b) => s + b.revenue, 0))}</td>
+                      <td className="py-3 text-right font-bold" style={{ color: TEAL }}>${fmt(bankData.reduce((s, b) => s + b.gp, 0))}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="glass-card-static p-6">
+              <p className="text-xs text-secondary mb-4">Monthly Gross Profit by Bank (last 6 months)</p>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={bankTrend} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333333" />
+                  <XAxis dataKey="month" tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#8A8A8A', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}K`} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {bankData.map((b, i) => {
+                    const bankColors: Record<string, string> = {
+                      'Westpac': '#D5002B', 'American Express': '#006FCF', 'NAB': '#C8102E',
+                      'Qantas': '#E0001B', 'HSBC': '#DB0011', 'ANZ': '#003D6A', 'Citi': '#003B70'
+                    }
+                    const color = bankColors[b.partner] || CHART_COLORS[i % CHART_COLORS.length]
+                    const isLast = i === bankData.length - 1
+                    return (
+                      <Bar key={b.partner} dataKey={b.partner} stackId="a" fill={color}
+                        radius={isLast ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+                    )
+                  })}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
       )}
 

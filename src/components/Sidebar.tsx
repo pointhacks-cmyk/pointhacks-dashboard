@@ -21,6 +21,7 @@ import {
   DollarSign,
   HeartPulse,
   Brain,
+  FileSpreadsheet,
 } from 'lucide-react'
 
 const navSections = [
@@ -39,6 +40,7 @@ const navSections = [
 
       { name: 'Revenue', href: '/revenue', icon: DollarSign },
       { name: 'Intelligence', href: '/intelligence', icon: Brain },
+      { name: 'Daily Report', href: '/daily-report', icon: FileSpreadsheet },
       { name: 'Audience', href: '/audience', icon: Users },
       { name: 'Trends', href: '/trends', icon: TrendingUp },
       { name: 'News Scanner', href: '/news', icon: Newspaper },
